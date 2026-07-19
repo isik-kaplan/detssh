@@ -1,0 +1,183 @@
+import textwrap
+
+import click
+from click.formatting import measure_table
+
+from detssh.backends import kdf, salt
+from detssh.backends.base import (
+    DEFAULT_TEXT_MARKER,
+    Field,
+    build_options,
+    confirm_overwrite,
+    is_interactive,
+    resolve_fields,
+    write_keypair_and_recap,
+)
+from detssh.backends.kdf.base import KDFError
+from detssh.backends.salt.base import SaltError
+from detssh.keygen import COMMENT_FORBIDDEN_CHARS, ED25519_SEED_LENGTH, default_output_path
+
+
+DEFAULT_KDF = "argon2id"
+DEFAULT_SALT_ALGO = "blake2b"
+HASH_LEN = ED25519_SEED_LENGTH
+
+SELECTORS = {
+    "kdf": Field("KDF backend", kind="select", choices=tuple(kdf.BACKENDS)),
+    "salt_algo": Field("Salt hash algorithm", kind="select", choices=tuple(salt.ALGOS)),
+}
+COMMON = {
+    "seed": Field("Seed passphrase", kind="secret", required=True),
+    "label": Field("Label"),
+    "output": Field("Output path for the private key (ssh-keygen style, e.g. ~/.ssh/id_ed25519)", kind="path"),
+    "comment": Field("Comment for the public key"),
+}
+DEFAULTS = {
+    "kdf": DEFAULT_KDF,
+    "salt_algo": DEFAULT_SALT_ALGO,
+    "label": "",
+    "output": default_output_path,
+    "comment": "",
+}
+
+
+def _peek(args, flag, default):
+    value = default
+    for i, arg in enumerate(args):
+        if arg == flag and i + 1 < len(args):
+            value = args[i + 1]
+        elif arg.startswith(flag + "="):
+            value = arg.split("=", 1)[1]
+    return value
+
+
+def _fields_for(kdf_cls, salt_cls):
+    return {
+        "seed": COMMON["seed"],
+        "label": COMMON["label"],
+        **kdf_cls.fields,
+        **salt_cls.fields,
+        "output": COMMON["output"],
+        "comment": COMMON["comment"],
+    }
+
+
+def _help_note(kdf_cls, salt_cls):
+    return (
+        "\b\n"
+        f"Options below are for --kdf={kdf_cls.name} --salt-algo={salt_cls.name} "
+        "(defaults, unless you passed both already).\n"
+        f"--kdf choices:       {', '.join(kdf.BACKENDS)}\n"
+        f"--salt-algo choices: {', '.join(salt.ALGOS)}\n"
+        "\b\n"
+        "Each combination has its own options. To see another one's:\n"
+        "  detssh --kdf pbkdf2 --salt-algo sha256 --help"
+    )
+
+
+class KDFSaltCommand(click.Command):
+    def parse_args(self, ctx, args):
+        kdf_name = _peek(args, "--kdf", DEFAULT_KDF)
+        salt_name = _peek(args, "--salt-algo", DEFAULT_SALT_ALGO)
+
+        kdf_cls = kdf.BACKENDS.get(kdf_name, kdf.BACKENDS[DEFAULT_KDF])
+        salt_cls = salt.ALGOS.get(salt_name, salt.ALGOS[DEFAULT_SALT_ALGO])
+
+        fields = {**SELECTORS, **_fields_for(kdf_cls, salt_cls)}
+        defaults = {**DEFAULTS, **kdf_cls.defaults, **salt_cls.defaults}
+        self.params = build_options(fields, defaults) + [
+            click.Option(["--overwrite-files"], is_flag=True, help="Overwrite existing output files without asking."),
+            click.Option(
+                ["--force-allow-soft-constraints"],
+                is_flag=True,
+                default=None,
+                help="Flag mode only: skip the 'this may take a long time' confirmation for oversized cost "
+                "knobs. Interactive mode always asks.",
+            ),
+        ]
+        self.epilog = _help_note(kdf_cls, salt_cls)
+
+        return super().parse_args(ctx, args)
+
+    def format_options(self, ctx, formatter):
+        opts = [record for param in self.get_params(ctx) if (record := param.get_help_record(ctx)) is not None]
+        if not opts:
+            return
+
+        first_col = min(measure_table(opts)[0], 30)
+        text_width = max(formatter.width - first_col - 4, 10)
+
+        rewrapped = []
+        for name, help_text in opts:
+            if DEFAULT_TEXT_MARKER in help_text:
+                description, default_line = help_text.split(DEFAULT_TEXT_MARKER, 1)
+                lines = textwrap.wrap(description, text_width) or [""]
+                lines.append(default_line)
+                help_text = "\b\n" + "\n".join(lines)
+            rewrapped.append((name, help_text))
+
+        with formatter.section("Options"):
+            formatter.write_dl(rewrapped)
+
+
+@click.command(
+    cls=KDFSaltCommand, context_settings={"help_option_names": ["-h", "--help"], "max_content_width": 120}
+)
+def main(overwrite_files, **values):
+    interactive = is_interactive(values)
+    force_allow_soft_constraints = bool(values.get("force_allow_soft_constraints"))
+
+    kdf_name = values["kdf"]
+    if kdf_name is None:
+        kdf_name = SELECTORS["kdf"].ask(DEFAULTS["kdf"]) if interactive else DEFAULTS["kdf"]
+    kdf_cls = kdf.BACKENDS[kdf_name]
+
+    salt_name = values["salt_algo"]
+    if salt_name is None:
+        salt_name = SELECTORS["salt_algo"].ask(DEFAULTS["salt_algo"]) if interactive else DEFAULTS["salt_algo"]
+    salt_cls = salt.ALGOS[salt_name]
+
+    fields = _fields_for(kdf_cls, salt_cls)
+    defaults = {**DEFAULTS, **kdf_cls.defaults, **salt_cls.defaults}
+
+    resolved = {
+        "kdf": kdf_name,
+        "salt_algo": salt_name,
+        "hash_len": HASH_LEN,
+        **resolve_fields(fields, values, defaults, interactive, force_allow_soft_constraints),
+    }
+
+    if any(char in resolved["comment"] for char in COMMENT_FORBIDDEN_CHARS):
+        raise click.UsageError("--comment must not contain newlines")
+
+    try:
+        salt_bytes = salt_cls.digest(resolved["label"], resolved)
+    except SaltError as e:
+        raise click.UsageError(f"{salt_name}: {e}") from e
+    salt_error = kdf_cls.salt_constraints.error_for(len(salt_bytes))
+    if salt_error:
+        raise click.UsageError(f"{kdf_name} {salt_error}")
+
+    confirm_overwrite(resolved["output"], overwrite_files)
+
+    click.echo("Deriving key...")
+    try:
+        seed_bytes = kdf_cls.run(resolved, salt_bytes)
+    except KDFError as e:
+        raise click.UsageError(f"{kdf_name}: {e}") from e
+
+    recap = (
+        ("kdf", kdf_name),
+        ("salt-algo", salt_name),
+        ("label", repr(resolved["label"])),
+        ("encoding", "utf-8"),
+        *salt_cls.recap(resolved),
+        *kdf_cls.recap(resolved),
+        ("hash-len", resolved["hash_len"]),
+    )
+
+    write_keypair_and_recap(seed_bytes, resolved["output"], resolved["comment"], recap=recap)
+
+
+if __name__ == "__main__":
+    main()

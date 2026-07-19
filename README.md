@@ -1,0 +1,59 @@
+# detssh
+
+Deterministic Ed25519 SSH key generation from a seed passphrase. Same
+passphrase + same parameters → same keypair, every time, on any machine -
+nothing to back up but what's in your head.
+
+```
+detssh
+```
+Prompts for everything (passphrase hidden + confirmed) and writes to the
+same place `ssh-keygen` would: `~/.ssh/id_ed25519` / `~/.ssh/id_ed25519.pub`
+(mode 600/700, `~/.ssh` created if missing). Pass `--output` to write
+somewhere else instead.
+
+Non-interactively:
+```
+detssh --kdf argon2id --salt-algo blake2b --seed "..." --label github --overwrite-files
+```
+Any flag switches to non-interactive mode: missing optional fields fall back
+to their defaults, `--seed` is the only required one. Passing `--seed` on the
+command line puts it in your shell history and process list (`ps aux`) - fine
+for local scripting, but prefer the interactive prompt when that matters.
+
+## Backends
+
+- `--kdf`: `argon2id` (default), `argon2i`, `argon2d`, `scrypt`, `pbkdf2`, `bcrypt_pbkdf`
+- `--salt-algo`: `blake2b` (default), `blake2s`, `sha256`, `sha384`, `sha512`, `sha3_256`, `sha3_384`, `sha3_512`
+
+Each combination has its own options (cost knobs, salt digest size, etc.),
+with their valid ranges shown in both `--help` and the interactive prompts.
+See them with:
+```
+detssh --kdf <kdf> --salt-algo <salt-algo> --help
+```
+
+We recommend sticking with the defaults (`argon2id`, memory-hard with a high
+cost) unless you have a specific reason not to - they make brute-forcing your
+passphrase significantly more expensive than faster KDFs like `pbkdf2`.
+
+Cost knobs (iterations, memory, cost, rounds, ...) also carry a soft safety
+limit meant to catch typos before they cost you minutes of derivation time.
+In interactive mode, going over one doesn't interrupt you - everything you
+exceeded is summarized in one confirmation at the very end. In flag mode, it
+fails immediately unless you pass `--force-allow-soft-constraints`.
+
+## Determinism guarantee
+
+Same explicit parameters → same key, across any release sharing the same
+major version - only a major version bump may change key derivation. That
+guarantee starts at 1.0; we're still on 0.x, so it doesn't apply yet (see
+`tests/golden/README.md`).
+
+## Development
+
+```
+uv sync
+uv run pytest
+uv run ruff check .
+```
