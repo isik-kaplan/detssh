@@ -15,8 +15,13 @@ BACKENDS = {
     "bcrypt_pbkdf": BcryptPbkdf,
 }
 
-for _name, _backend in BACKENDS.items():
-    if _backend.name != _name:
-        raise TypeError(f"{_backend.__name__}.name must equal its registry key {_name!r}")
-    if _backend.salt_constraints is None:
-        raise TypeError(f"{_backend.__name__} must set salt_constraints (use NO_SALT_CONSTRAINTS if none apply)")
+
+def validate_backends(backends):
+    for name, backend in backends.items():
+        if backend.name != name:
+            raise TypeError(f"{backend.__name__}.name must equal its registry key {name!r}")
+        if backend.salt_constraints is None:
+            raise TypeError(f"{backend.__name__} must set salt_constraints (use NO_SALT_CONSTRAINTS if none apply)")
+
+
+validate_backends(BACKENDS)

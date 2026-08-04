@@ -31,6 +31,9 @@ COMMON = {
     "label": Field("Label"),
     "output": Field("Output path for the private key (ssh-keygen style, e.g. ~/.ssh/id_ed25519)", kind="path"),
     "comment": Field("Comment for the public key"),
+    "key_passphrase": Field(
+        "Passphrase to encrypt the private key file with (leave empty for none)", kind="secret"
+    ),
 }
 DEFAULTS = {
     "kdf": DEFAULT_KDF,
@@ -38,6 +41,7 @@ DEFAULTS = {
     "label": "",
     "output": default_output_path,
     "comment": "",
+    "key_passphrase": "",
 }
 
 
@@ -59,6 +63,7 @@ def _fields_for(kdf_cls, salt_cls):
         **salt_cls.fields,
         "output": COMMON["output"],
         "comment": COMMON["comment"],
+        "key_passphrase": COMMON["key_passphrase"],
     }
 
 
@@ -176,7 +181,13 @@ def main(overwrite_files, **values):
         ("hash-len", resolved["hash_len"]),
     )
 
-    write_keypair_and_recap(seed_bytes, resolved["output"], resolved["comment"], recap=recap)
+    write_keypair_and_recap(
+        seed_bytes,
+        resolved["output"],
+        resolved["comment"],
+        recap=recap,
+        key_passphrase=resolved["key_passphrase"],
+    )
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Run tests
+      - name: Run tests (100% coverage required)
         run: uv run pytest -q
 
       - name: Run ruff

@@ -55,7 +55,9 @@ class Field:
     def ask(self, default):
         message = self.message + self.hint()
         if self.kind == "secret":
-            return click.prompt(message, hide_input=True, confirmation_prompt=True)
+            if self.required:
+                return click.prompt(message, hide_input=True, confirmation_prompt=True)
+            return click.prompt(message, hide_input=True, confirmation_prompt=True, default="", show_default=False)
         if self.kind == "int":
             return click.prompt(message, default=default, type=int)
         if self.kind == "path":
@@ -159,16 +161,18 @@ def confirm_overwrite(output, overwrite_files):
         raise click.Abort()
 
 
-def write_keypair_and_recap(seed_bytes, output, comment, recap):
+def write_keypair_and_recap(seed_bytes, output, comment, recap, key_passphrase=""):
     private_key, public_key = keypair_from_seed(seed_bytes)
     try:
-        priv_path, pub_path = write_keypair(private_key, public_key, output, comment=comment)
+        priv_path, pub_path = write_keypair(
+            private_key, public_key, output, comment=comment, key_passphrase=key_passphrase
+        )
     except OSError as e:
         raise click.ClickException(f"couldn't write {output}: {e.strerror or e}") from e
     except ValueError as e:
         raise click.UsageError(str(e)) from e
 
-    click.echo(f"Wrote private key: {priv_path}")
+    click.echo(f"Wrote private key: {priv_path}{' (encrypted)' if key_passphrase else ''}")
     click.echo(f"Wrote public key:  {pub_path}")
 
     click.echo()

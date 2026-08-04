@@ -21,6 +21,14 @@ to their defaults, `--seed` is the only required one. Passing `--seed` on the
 command line puts it in your shell history and process list (`ps aux`) - fine
 for local scripting, but prefer the interactive prompt when that matters.
 
+By default the private key file is written unencrypted, like `ssh-keygen -N
+""`. Pass `--key-passphrase` (or leave it blank at the interactive prompt to
+skip) to encrypt it at rest instead - anyone who gets the file will still
+need that passphrase to use it. This is unrelated to the seed passphrase: it
+never touches key derivation, so it doesn't need to be remembered to
+*recreate* the key, only to unlock the file you already have. Same caveat as
+`--seed` applies if passed as a flag.
+
 ## Backends
 
 - `--kdf`: `argon2id` (default), `argon2i`, `argon2d`, `scrypt`, `pbkdf2`, `bcrypt_pbkdf`
@@ -57,3 +65,7 @@ uv sync
 uv run pytest
 uv run ruff check .
 ```
+
+`pytest` runs with coverage on by default (`[tool.pytest.ini_options]` in
+`pyproject.toml`) and fails under 100% line+branch coverage - same gate
+locally and in CI, nothing extra to remember to pass.

@@ -6,15 +6,27 @@ from unittest.mock import patch
 
 import click
 import pytest
+import questionary
+from click.testing import CliRunner
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from detssh.backends.base import Field, _display_path, build_options, confirm_overwrite, is_interactive, resolve_fields
+from detssh.backends.base import (
+    Field,
+    _display_path,
+    build_options,
+    confirm_overwrite,
+    is_interactive,
+    resolve_fields,
+    write_keypair_and_recap,
+)
 from detssh.backends.kdf import BACKENDS as KDF_BACKENDS
-from detssh.backends.kdf.base import KDFError, SaltConstraints
+from detssh.backends.kdf import validate_backends
+from detssh.backends.kdf.base import KDFBackend, KDFError, SaltConstraints
 from detssh.backends.salt import ALGOS as SALT_ALGOS
-from detssh.backends.salt.base import SaltError
-from detssh.cli import _fields_for, _peek
+from detssh.backends.salt import validate_algos
+from detssh.backends.salt.base import SaltAlgo, SaltError
+from detssh.cli import KDFSaltCommand, _fields_for, _peek, main
 from detssh.keygen import COMMENT_FORBIDDEN_CHARS, keypair_from_seed, public_key_path, write_keypair
 
 
@@ -399,7 +411,7 @@ def test_fields_for_has_no_key_collisions(kdf_name, salt_name):
     kdf_cls = KDF_BACKENDS[kdf_name]
     salt_cls = SALT_ALGOS[salt_name]
     fields = _fields_for(kdf_cls, salt_cls)
-    common_keys = {"seed", "label", "output", "comment"}
+    common_keys = {"seed", "label", "output", "comment", "key_passphrase"}
     assert common_keys <= fields.keys()
     assert len(fields) == len(common_keys) + len(kdf_cls.fields) + len(salt_cls.fields)
 
@@ -419,6 +431,34 @@ def test_keypair_from_seed_is_deterministic_for_any_32_byte_seed(seed):
     priv1, _ = keypair_from_seed(seed)
     priv2, _ = keypair_from_seed(seed)
     assert priv1.private_bytes_raw() == priv2.private_bytes_raw()
+
+
+def test_write_keypair_leaves_key_unencrypted_when_no_passphrase_given():
+    from cryptography.hazmat.primitives import serialization
+
+    private_key, public_key = keypair_from_seed(b"\x01" * 32)
+    with tempfile.TemporaryDirectory() as tmp:
+        output = Path(tmp) / "id_ed25519"
+        write_keypair(private_key, public_key, output, key_passphrase="")
+        loaded = serialization.load_ssh_private_key(output.read_bytes(), password=None)
+        assert loaded.private_bytes_raw() == private_key.private_bytes_raw()
+
+
+def test_write_keypair_encrypts_when_passphrase_given_and_requires_it_to_load():
+    from cryptography.exceptions import InvalidKey
+    from cryptography.hazmat.primitives import serialization
+
+    private_key, public_key = keypair_from_seed(b"\x02" * 32)
+    with tempfile.TemporaryDirectory() as tmp:
+        output = Path(tmp) / "id_ed25519"
+        write_keypair(private_key, public_key, output, key_passphrase="hunter2")
+        data = output.read_bytes()
+
+        with pytest.raises((TypeError, InvalidKey)):
+            serialization.load_ssh_private_key(data, password=None)
+
+        loaded = serialization.load_ssh_private_key(data, password=b"hunter2")
+        assert loaded.private_bytes_raw() == private_key.private_bytes_raw()
 
 
 @given(seed=st.binary(min_size=0, max_size=64).filter(lambda s: len(s) != 32))
@@ -466,6 +506,34 @@ def test_resolve_fields_accepts_any_value_when_not_required(value):
     fields = {"x": Field("X", kind="text")}
     resolved = resolve_fields(fields, {"x": value}, {}, interactive=False)
     assert resolved["x"] == value
+
+
+def test_optional_secret_ask_defaults_to_empty_so_it_can_be_skipped(monkeypatch):
+    captured = {}
+
+    def fake_prompt(message, **kwargs):
+        captured.update(kwargs)
+        return kwargs.get("default")
+
+    monkeypatch.setattr(click, "prompt", fake_prompt)
+    field = Field("Key passphrase", kind="secret", required=False)
+    assert field.ask(default="ignored") == ""
+    assert captured["default"] == ""
+    assert captured["confirmation_prompt"] is True
+    assert captured["hide_input"] is True
+
+
+def test_required_secret_ask_has_no_default_so_empty_input_reprompts(monkeypatch):
+    captured = {}
+
+    def fake_prompt(message, **kwargs):
+        captured.update(kwargs)
+        return "whatever"
+
+    monkeypatch.setattr(click, "prompt", fake_prompt)
+    field = Field("Seed passphrase", kind="secret", required=True)
+    field.ask(default="ignored")
+    assert "default" not in captured
 
 
 @given(values=st.dictionaries(st.text(min_size=1, max_size=5), st.one_of(st.none(), st.integers(), st.text())))
@@ -612,3 +680,246 @@ def test_display_path_leaves_paths_outside_home_untouched(name):
         path = Path(other_dir) / name
         assert _display_path(path) == str(path)
         assert not _display_path(path).startswith("~")
+
+
+def test_hint_shows_only_a_floor_when_theres_no_ceiling():
+    field = Field("x", kind="int", min_value=5)
+    assert field.hint() == " (>= 5)"
+
+
+def test_hint_shows_only_a_ceiling_when_theres_no_floor():
+    field = Field("x", kind="int", max_value=5)
+    assert field.hint() == " (<= 5)"
+
+
+def test_hard_error_for_passes_none_through_without_checking_bounds():
+    field = Field("x", kind="int", min_value=5, max_value=10)
+    assert field.hard_error_for(None) is None
+
+
+def test_ask_int_delegates_to_click_prompt_with_int_type(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(click, "prompt", lambda message, **kwargs: captured.update(kwargs) or 7)
+    field = Field("Count", kind="int")
+    assert field.ask(default=3) == 7
+    assert captured["type"] is int
+    assert captured["default"] == 3
+
+
+def test_ask_path_shows_the_default_in_the_message_when_one_is_set(monkeypatch):
+    captured = {}
+
+    def fake_prompt(message, **kwargs):
+        captured["message"] = message
+        captured.update(kwargs)
+        return Path("/chosen")
+
+    monkeypatch.setattr(click, "prompt", fake_prompt)
+    field = Field("Output path", kind="path")
+    assert field.ask(default=Path("/default/key")) == Path("/chosen")
+    assert "/default/key" in captured["message"]
+    assert captured["show_default"] is False
+
+
+def test_ask_path_omits_the_bracketed_default_when_there_is_none(monkeypatch):
+    captured = {}
+
+    def fake_prompt(message, **kwargs):
+        captured["message"] = message
+        return Path("/chosen")
+
+    monkeypatch.setattr(click, "prompt", fake_prompt)
+    field = Field("Output path", kind="path")
+    field.ask(default=None)
+    assert "[" not in captured["message"]
+
+
+def test_ask_select_returns_the_chosen_answer(monkeypatch):
+    monkeypatch.setattr(
+        questionary, "select", lambda message, choices, default: type("Q", (), {"ask": lambda self: "b"})()
+    )
+    field = Field("Backend", kind="select", choices=("a", "b"))
+    assert field.ask(default="a") == "b"
+
+
+def test_ask_select_aborts_when_the_user_cancels(monkeypatch):
+    monkeypatch.setattr(
+        questionary, "select", lambda message, choices, default: type("Q", (), {"ask": lambda self: None})()
+    )
+    field = Field("Backend", kind="select", choices=("a", "b"))
+    with pytest.raises(click.Abort):
+        field.ask(default="a")
+
+
+def test_ask_falls_back_to_plain_prompt_for_text_kind(monkeypatch):
+    captured = {}
+
+    def fake_prompt(message, **kwargs):
+        captured.update(kwargs)
+        return "typed"
+
+    monkeypatch.setattr(click, "prompt", fake_prompt)
+    field = Field("Label", kind="text")
+    assert field.ask(default="fallback") == "typed"
+    assert captured["default"] == "fallback"
+    assert captured["show_default"] is True
+
+
+def test_resolve_fields_calls_a_callable_default_in_interactive_mode(monkeypatch):
+    fields = {"output": Field("Output", kind="path")}
+    calls = []
+
+    def callable_default():
+        calls.append(1)
+        return Path("/computed/default")
+
+    monkeypatch.setattr(Field, "ask", lambda self, default: default)
+    resolved = resolve_fields(fields, {"output": None}, {"output": callable_default}, interactive=True)
+    assert resolved["output"] == Path("/computed/default")
+    assert calls == [1]
+
+
+def test_write_keypair_and_recap_converts_value_error_to_usage_error(tmp_path):
+    with pytest.raises(click.UsageError, match="newline"):
+        write_keypair_and_recap(
+            b"\x00" * 32, tmp_path / "key", comment="bad\ncomment", recap=(), key_passphrase=""
+        )
+    assert not (tmp_path / "key").exists()
+
+
+def test_kdf_backend_base_run_is_not_implemented():
+    with pytest.raises(NotImplementedError):
+        KDFBackend.run(resolved={}, salt=b"")
+
+
+def test_kdf_backend_base_recap_is_empty_by_default():
+    assert KDFBackend.recap(resolved={}) == ()
+
+
+def test_salt_algo_base_digest_is_not_implemented():
+    with pytest.raises(NotImplementedError):
+        SaltAlgo.digest(label="x", resolved={})
+
+
+def test_validate_backends_accepts_the_real_registry():
+    validate_backends(KDF_BACKENDS)
+
+
+def test_validate_backends_rejects_a_backend_whose_name_doesnt_match_its_registry_key():
+    class Mismatched:
+        name = "wrong"
+        salt_constraints = SaltConstraints()
+
+    with pytest.raises(TypeError, match="must equal its registry key"):
+        validate_backends({"right": Mismatched})
+
+
+def test_validate_backends_rejects_a_backend_without_salt_constraints():
+    class Unconstrained:
+        name = "unconstrained"
+        salt_constraints = None
+
+    with pytest.raises(TypeError, match="must set salt_constraints"):
+        validate_backends({"unconstrained": Unconstrained})
+
+
+def test_validate_algos_accepts_the_real_registry():
+    validate_algos(SALT_ALGOS)
+
+
+def test_validate_algos_rejects_an_algo_whose_name_doesnt_match_its_registry_key():
+    class Mismatched:
+        name = "wrong"
+        digest_size = 32
+        min_digest_size = None
+        max_digest_size = None
+
+    with pytest.raises(TypeError, match="must equal its registry key"):
+        validate_algos({"right": Mismatched})
+
+
+def test_validate_algos_rejects_a_variable_algo_missing_its_size_bounds():
+    class Unbounded:
+        name = "unbounded"
+        digest_size = None
+        min_digest_size = None
+        max_digest_size = None
+
+    with pytest.raises(TypeError, match="must set digest_size"):
+        validate_algos({"unbounded": Unbounded})
+
+
+def test_format_options_is_a_no_op_when_the_command_has_no_options():
+    cmd = KDFSaltCommand(name="detssh-test", params=[])
+    ctx = click.Context(cmd, info_name="detssh-test", help_option_names=[])
+    formatter = click.HelpFormatter()
+
+    cmd.format_options(ctx, formatter)
+
+    assert formatter.getvalue() == ""
+
+
+def test_cli_wraps_a_salt_backend_error_as_a_clean_usage_error(monkeypatch, tmp_path):
+    from detssh.backends.salt.blake2b import Blake2b
+
+    def broken_digest(cls, label, resolved):
+        raise SaltError("boom")
+
+    monkeypatch.setattr(Blake2b, "digest", classmethod(broken_digest))
+
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        ["--kdf", "pbkdf2", "--salt-algo", "blake2b", "--seed", "x", "--output", str(tmp_path / "key")],
+    )
+
+    assert result.exit_code != 0
+    assert "blake2b: boom" in result.output
+
+
+def test_cli_rejects_a_salt_shorter_than_the_kdfs_minimum(tmp_path):
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "--kdf",
+            "argon2id",
+            "--salt-algo",
+            "blake2s",
+            "--salt-digest-size",
+            "4",
+            "--seed",
+            "x",
+            "--output",
+            str(tmp_path / "key"),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "argon2id needs a salt of at least 8 bytes, got 4" in result.output
+
+
+def test_cli_key_passphrase_encrypts_the_written_private_key(tmp_path):
+    from cryptography.hazmat.primitives import serialization
+
+    key_path = tmp_path / "key"
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "--kdf",
+            "pbkdf2",
+            "--seed",
+            "x",
+            "--output",
+            str(key_path),
+            "--key-passphrase",
+            "hunter2",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "(encrypted)" in result.output
+    with pytest.raises(TypeError):
+        serialization.load_ssh_private_key(key_path.read_bytes(), password=None)
+    serialization.load_ssh_private_key(key_path.read_bytes(), password=b"hunter2")

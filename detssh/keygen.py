@@ -33,7 +33,7 @@ def public_key_path(private_key_path):
     return private_key_path.with_name(private_key_path.name + ".pub")
 
 
-def write_keypair(private_key, public_key, output_path, comment=""):
+def write_keypair(private_key, public_key, output_path, comment="", key_passphrase=""):
     if any(char in comment for char in COMMENT_FORBIDDEN_CHARS):
         raise ValueError("comment must not contain newlines")
 
@@ -43,10 +43,15 @@ def write_keypair(private_key, public_key, output_path, comment=""):
     if output_path.parent == _ssh_dir():
         output_path.parent.mkdir(mode=SSH_DIR_MODE, exist_ok=True)
 
+    encryption_algorithm = (
+        serialization.BestAvailableEncryption(key_passphrase.encode("utf-8"))
+        if key_passphrase
+        else serialization.NoEncryption()
+    )
     private_bytes = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.OpenSSH,
-        encryption_algorithm=serialization.NoEncryption(),
+        encryption_algorithm=encryption_algorithm,
     )
     public_bytes = public_key.public_bytes(
         encoding=serialization.Encoding.OpenSSH,

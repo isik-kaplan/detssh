@@ -19,8 +19,13 @@ ALGOS = {
     "sha3_512": Sha3512,
 }
 
-for _name, _algo in ALGOS.items():
-    if _algo.name != _name:
-        raise TypeError(f"{_algo.__name__}.name must equal its registry key {_name!r}")
-    if _algo.digest_size is None and (_algo.min_digest_size is None or _algo.max_digest_size is None):
-        raise TypeError(f"{_algo.__name__} must set digest_size, or min/max_digest_size if variable")
+
+def validate_algos(algos):
+    for name, algo in algos.items():
+        if algo.name != name:
+            raise TypeError(f"{algo.__name__}.name must equal its registry key {name!r}")
+        if algo.digest_size is None and (algo.min_digest_size is None or algo.max_digest_size is None):
+            raise TypeError(f"{algo.__name__} must set digest_size, or min/max_digest_size if variable")
+
+
+validate_algos(ALGOS)
