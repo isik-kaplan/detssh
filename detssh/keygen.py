@@ -12,12 +12,12 @@ PRIVATE_KEY_MODE = stat.S_IRUSR | stat.S_IWUSR
 SSH_DIR_MODE = stat.S_IRWXU
 
 
-def _ssh_dir():
+def ssh_dir():
     return Path.home() / ".ssh"
 
 
 def default_output_path():
-    return _ssh_dir() / "id_ed25519"
+    return ssh_dir() / "id_ed25519"
 
 
 # ed25519 is the only algorithm whose private key is literally its own seed, so it's the only one usable here.
@@ -33,15 +33,15 @@ def public_key_path(private_key_path):
     return private_key_path.with_name(private_key_path.name + ".pub")
 
 
-def write_keypair(private_key, public_key, output_path, comment="", key_passphrase=""):
+def write_keypair(private_key, public_key, output_path, comment="", key_passphrase="", create_parent_dirs=False):
     if any(char in comment for char in COMMENT_FORBIDDEN_CHARS):
         raise ValueError("comment must not contain newlines")
 
     output_path = Path(output_path)
     pub_path = public_key_path(output_path)
 
-    if output_path.parent == _ssh_dir():
-        output_path.parent.mkdir(mode=SSH_DIR_MODE, exist_ok=True)
+    if create_parent_dirs or output_path.parent == ssh_dir():
+        output_path.parent.mkdir(mode=SSH_DIR_MODE, parents=True, exist_ok=True)
 
     encryption_algorithm = (
         serialization.BestAvailableEncryption(key_passphrase.encode("utf-8"))

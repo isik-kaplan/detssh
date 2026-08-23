@@ -3,7 +3,7 @@ from pathlib import Path
 import click
 import questionary
 
-from detssh.keygen import keypair_from_seed, public_key_path, write_keypair
+from detssh.keygen import keypair_from_seed, public_key_path, ssh_dir, write_keypair
 
 
 def _display_path(path):
@@ -62,6 +62,8 @@ class Field:
             return click.prompt(message, default=default, type=int)
         if self.kind == "path":
             if default is not None:
+                if Path(default).exists() or public_key_path(default).exists():
+                    click.echo(f"Note: {_display_path(default)} already exists - enter a different path to avoid this.")
                 message = f"{message} [{_display_path(default)}]"
             return click.prompt(
                 message, default=default, type=click.Path(dir_okay=False, path_type=Path), show_default=False
@@ -161,11 +163,26 @@ def confirm_overwrite(output, overwrite_files):
         raise click.Abort()
 
 
-def write_keypair_and_recap(seed_bytes, output, comment, recap, key_passphrase=""):
+def confirm_create_parent_dirs(output, create_parent_dirs, interactive):
+    parent = Path(output).parent
+    if not create_parent_dirs or parent.exists() or parent == ssh_dir():
+        return
+    if interactive and not parent.is_relative_to(ssh_dir()):
+        click.echo(f"Warning: {_display_path(parent)} is outside ~/.ssh.")
+        if not click.confirm("Create it anyway?"):
+            raise click.Abort()
+
+
+def write_keypair_and_recap(seed_bytes, output, comment, recap, key_passphrase="", create_parent_dirs=False):
     private_key, public_key = keypair_from_seed(seed_bytes)
     try:
         priv_path, pub_path = write_keypair(
-            private_key, public_key, output, comment=comment, key_passphrase=key_passphrase
+            private_key,
+            public_key,
+            output,
+            comment=comment,
+            key_passphrase=key_passphrase,
+            create_parent_dirs=create_parent_dirs,
         )
     except OSError as e:
         raise click.ClickException(f"couldn't write {output}: {e.strerror or e}") from e

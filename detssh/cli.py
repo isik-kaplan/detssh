@@ -8,6 +8,7 @@ from detssh.backends.base import (
     DEFAULT_TEXT_MARKER,
     Field,
     build_options,
+    confirm_create_parent_dirs,
     confirm_overwrite,
     is_interactive,
     resolve_fields,
@@ -31,9 +32,7 @@ COMMON = {
     "label": Field("Label"),
     "output": Field("Output path for the private key (ssh-keygen style, e.g. ~/.ssh/id_ed25519)", kind="path"),
     "comment": Field("Comment for the public key"),
-    "key_passphrase": Field(
-        "Passphrase to encrypt the private key file with (leave empty for none)", kind="secret"
-    ),
+    "key_passphrase": Field("Passphrase to encrypt the private key file with (leave empty for none)", kind="secret"),
 }
 DEFAULTS = {
     "kdf": DEFAULT_KDF,
@@ -93,6 +92,12 @@ class KDFSaltCommand(click.Command):
         self.params = build_options(fields, defaults) + [
             click.Option(["--overwrite-files"], is_flag=True, help="Overwrite existing output files without asking."),
             click.Option(
+                ["--create-parent-dirs"],
+                is_flag=True,
+                help="Create the output path's parent directories if missing, even outside ~/.ssh. "
+                "Interactive mode still confirms before creating one outside ~/.ssh.",
+            ),
+            click.Option(
                 ["--force-allow-soft-constraints"],
                 is_flag=True,
                 default=None,
@@ -125,10 +130,8 @@ class KDFSaltCommand(click.Command):
             formatter.write_dl(rewrapped)
 
 
-@click.command(
-    cls=KDFSaltCommand, context_settings={"help_option_names": ["-h", "--help"], "max_content_width": 120}
-)
-def main(overwrite_files, **values):
+@click.command(cls=KDFSaltCommand, context_settings={"help_option_names": ["-h", "--help"], "max_content_width": 120})
+def main(overwrite_files, create_parent_dirs, **values):
     interactive = is_interactive(values)
     force_allow_soft_constraints = bool(values.get("force_allow_soft_constraints"))
 
@@ -164,6 +167,7 @@ def main(overwrite_files, **values):
         raise click.UsageError(f"{kdf_name} {salt_error}")
 
     confirm_overwrite(resolved["output"], overwrite_files)
+    confirm_create_parent_dirs(resolved["output"], create_parent_dirs, interactive)
 
     click.echo("Deriving key...")
     try:
@@ -187,6 +191,7 @@ def main(overwrite_files, **values):
         resolved["comment"],
         recap=recap,
         key_passphrase=resolved["key_passphrase"],
+        create_parent_dirs=create_parent_dirs,
     )
 
 

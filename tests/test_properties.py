@@ -15,6 +15,7 @@ from detssh.backends.base import (
     Field,
     _display_path,
     build_options,
+    confirm_create_parent_dirs,
     confirm_overwrite,
     is_interactive,
     resolve_fields,
@@ -568,6 +569,48 @@ def test_confirm_overwrite_never_raises_for_a_nonexistent_path(name, overwrite_f
         confirm_overwrite(path, overwrite_files)
 
 
+def test_confirm_create_parent_dirs_is_a_noop_when_the_flag_is_off(monkeypatch, tmp_path):
+    monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
+    confirm_create_parent_dirs(tmp_path / "missing" / "key", create_parent_dirs=False, interactive=True)
+
+
+def test_confirm_create_parent_dirs_is_a_noop_when_the_parent_already_exists(monkeypatch, tmp_path):
+    monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
+    confirm_create_parent_dirs(tmp_path / "key", create_parent_dirs=True, interactive=True)
+
+
+def test_confirm_create_parent_dirs_is_a_noop_for_the_ssh_dir_itself(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
+    confirm_create_parent_dirs(tmp_path / ".ssh" / "id_ed25519", create_parent_dirs=True, interactive=True)
+
+
+def test_confirm_create_parent_dirs_skips_the_prompt_for_a_path_under_ssh_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
+    confirm_create_parent_dirs(tmp_path / ".ssh" / "label" / "key", create_parent_dirs=True, interactive=True)
+
+
+def test_confirm_create_parent_dirs_skips_the_prompt_when_not_interactive(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
+    confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=True, interactive=False)
+
+
+def test_confirm_create_parent_dirs_proceeds_when_confirmed(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(click, "confirm", lambda *a, **k: True)
+    confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=True, interactive=True)
+    assert "outside ~/.ssh" in capsys.readouterr().out
+
+
+def test_confirm_create_parent_dirs_aborts_when_declined(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(click, "confirm", lambda *a, **k: False)
+    with pytest.raises(click.Abort):
+        confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=True, interactive=True)
+
+
 @given(
     value=st.integers(min_value=-(10**6), max_value=10**6),
     min_value=st.integers(min_value=-(10**6), max_value=10**6),
@@ -721,6 +764,28 @@ def test_ask_path_shows_the_default_in_the_message_when_one_is_set(monkeypatch):
     assert captured["show_default"] is False
 
 
+def test_ask_path_warns_when_the_default_output_already_exists(monkeypatch, tmp_path, capsys):
+    default = tmp_path / "id_ed25519"
+    default.write_text("existing key")
+    monkeypatch.setattr(click, "prompt", lambda message, **kwargs: Path("/chosen"))
+
+    field = Field("Output path", kind="path")
+    field.ask(default=default)
+
+    assert "already exists" in capsys.readouterr().out
+
+
+def test_ask_path_warns_when_only_the_public_counterpart_exists(monkeypatch, tmp_path, capsys):
+    default = tmp_path / "id_ed25519"
+    (tmp_path / "id_ed25519.pub").write_text("existing pub key")
+    monkeypatch.setattr(click, "prompt", lambda message, **kwargs: Path("/chosen"))
+
+    field = Field("Output path", kind="path")
+    field.ask(default=default)
+
+    assert "already exists" in capsys.readouterr().out
+
+
 def test_ask_path_omits_the_bracketed_default_when_there_is_none(monkeypatch):
     captured = {}
 
@@ -781,9 +846,7 @@ def test_resolve_fields_calls_a_callable_default_in_interactive_mode(monkeypatch
 
 def test_write_keypair_and_recap_converts_value_error_to_usage_error(tmp_path):
     with pytest.raises(click.UsageError, match="newline"):
-        write_keypair_and_recap(
-            b"\x00" * 32, tmp_path / "key", comment="bad\ncomment", recap=(), key_passphrase=""
-        )
+        write_keypair_and_recap(b"\x00" * 32, tmp_path / "key", comment="bad\ncomment", recap=(), key_passphrase="")
     assert not (tmp_path / "key").exists()
 
 
