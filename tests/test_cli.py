@@ -6,7 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from detssh.backends.base import confirm_overwrite
-from detssh.cli import _peek, main
+from detssh.cli import _peek, main, run
 from detssh.keygen import default_output_path, keypair_from_seed, write_keypair
 
 
@@ -401,3 +401,24 @@ def test_help_shows_output_default_with_tilde_not_the_real_home_path(monkeypatch
     assert result.exit_code == 0, result.output
     assert "~/.ssh/id_ed25519" in result.output
     assert str(tmp_path) not in result.output
+
+
+def test_run_dispatches_ssh_argv_to_the_ssh_group(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setattr("sys.argv", ["detssh", "ssh", "list"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        run()
+
+    assert exc_info.value.code == 0
+
+
+def test_run_dispatches_everything_else_to_the_keygen_command(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("sys.argv", ["detssh", "--kdf", "pbkdf2", "--seed", "x", "--overwrite-files"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        run()
+
+    assert exc_info.value.code == 0
+    assert (tmp_path / ".ssh" / "id_ed25519").exists()

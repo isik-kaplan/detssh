@@ -27,7 +27,7 @@ Homepage = "https://github.com/isik-kaplan/detssh"
 Repository = "https://github.com/isik-kaplan/detssh"
 
 [project.scripts]
-detssh = "detssh.cli:main"
+detssh = "detssh.cli:run"
 
 [tool.uv]
 dev-dependencies = [

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `detssh ssh register <label> <user>@<host> --key <path>`: records the
+  label in `~/.config/detssh/config`, generates a `Host` block for it, and
+  wires it into `~/.ssh/config` via a single `Include` line - so plain
+  `ssh <label>` connects with the right key afterward, no `-i` or
+  hand-written config needed. Also `detssh ssh list` and
+  `detssh ssh forget <label>` (never deletes the key file itself).
+- `--create-parent-dirs`: create the output path's missing parent
+  directories, including outside `~/.ssh` (with one interactive
+  confirmation first in that case). Previously only `~/.ssh` itself was
+  ever auto-created.
+- The interactive output-path prompt now notes when the default location is
+  already occupied, before you type anything.
+
 ## [0.2.0] - 2026-08-04
 
 ### Added

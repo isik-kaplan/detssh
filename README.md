@@ -29,6 +29,28 @@ never touches key derivation, so it doesn't need to be remembered to
 *recreate* the key, only to unlock the file you already have. Same caveat as
 `--seed` applies if passed as a flag.
 
+## Using the key with `ssh`
+
+`ssh` only auto-offers keys with default filenames (`id_rsa`, `id_ed25519`, ...)
+sitting directly in `~/.ssh/` - a key written under `--output` or a per-label
+subdirectory needs either `-i <path>`, a hand-written `Host` block in
+`~/.ssh/config`, or `ssh-add`ing it to your agent.
+
+`detssh ssh` automates the config-file route:
+```
+detssh ssh register isik:personal:contabo root@contabo.com --key ~/.ssh/isik:personal:contabo/id_ed25519
+```
+This records the label in `~/.config/detssh/config`, generates a `Host` block
+for it in a detssh-managed file, and adds a single `Include` line to
+`~/.ssh/config` (once, at the top) that pulls it in. After that,
+`ssh isik:personal:contabo` just works - through real `ssh`, nothing routed
+through detssh at connect time.
+
+```
+detssh ssh list              # show registered labels
+detssh ssh forget <label>    # remove a label (never deletes the key file)
+```
+
 ## Backends
 
 - `--kdf`: `argon2id` (default), `argon2i`, `argon2d`, `scrypt`, `pbkdf2`, `bcrypt_pbkdf`

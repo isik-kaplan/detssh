@@ -1,3 +1,4 @@
+import sys
 import textwrap
 
 import click
@@ -75,7 +76,10 @@ def _help_note(kdf_cls, salt_cls):
         f"--salt-algo choices: {', '.join(salt.ALGOS)}\n"
         "\b\n"
         "Each combination has its own options. To see another one's:\n"
-        "  detssh --kdf pbkdf2 --salt-algo sha256 --help"
+        "  detssh --kdf pbkdf2 --salt-algo sha256 --help\n"
+        "\b\n"
+        "To use a generated key with plain `ssh <label>`, see:\n"
+        "  detssh ssh --help"
     )
 
 
@@ -195,5 +199,17 @@ def main(overwrite_files, create_parent_dirs, **values):
     )
 
 
+def run():
+    """Console-script entry point: `detssh ssh ...` dispatches to the ssh_config
+    registry commands, everything else runs the keygen wizard as before."""
+    argv = sys.argv[1:]
+    if argv[:1] == ["ssh"]:
+        from detssh.ssh_cli import ssh
+
+        ssh(args=argv[1:], prog_name="detssh ssh")
+    else:
+        main(args=argv, prog_name="detssh")
+
+
 if __name__ == "__main__":
-    main()
+    run()
