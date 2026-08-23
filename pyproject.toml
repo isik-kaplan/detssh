@@ -1,6 +1,6 @@
 [project]
 name = "detssh"
-version = "0.2.0"
+version = "0.3.0"
 description = "Deterministic Ed25519 SSH key generation from a seed passphrase, via configurable KDF and salt-hash backends."
 readme = "README.md"
 authors = [
