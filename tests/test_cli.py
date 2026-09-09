@@ -2,12 +2,15 @@ import os
 import stat
 from unittest.mock import patch
 
+import click
 import pytest
+import questionary
 from click.testing import CliRunner
 
 from detssh.backends.base import confirm_overwrite
-from detssh.cli import _peek, main, run
+from detssh.cli import _peek, _register_interactively, main, run
 from detssh.keygen import default_output_path, keypair_from_seed, write_keypair
+from detssh.registry import load_registry
 
 
 def test_confirm_overwrite_accepts_plain_string_path(tmp_path):
@@ -422,3 +425,179 @@ def test_run_dispatches_everything_else_to_the_keygen_command(monkeypatch, tmp_p
 
     assert exc_info.value.code == 0
     assert (tmp_path / ".ssh" / "id_ed25519").exists()
+
+
+def _register_prompt_command(label, key_path):
+    @click.command()
+    def cmd():
+        _register_interactively(label, key_path)
+
+    return cmd
+
+
+def _fake_select(message, choices, default):
+    """Answer questionary's backend pickers with pbkdf2 (cheap to derive) and otherwise
+    whatever the wizard offered as its default."""
+    answer = "pbkdf2" if "pbkdf2" in choices else default
+    return type("Q", (), {"ask": lambda self: answer})()
+
+
+def test_wizard_register_prompt_registers_the_label(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    key_path = tmp_path / "id_ed25519"
+
+    result = CliRunner().invoke(
+        _register_prompt_command("isik:personal:contaboo", key_path), input="y\nroot@contaboo.com\n\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Run: ssh isik:personal:contaboo" in result.output
+    entry = load_registry()["isik:personal:contaboo"]
+    assert (entry.user, entry.host, entry.port) == ("root", "contaboo.com", None)
+    assert entry.key == key_path
+
+
+def test_wizard_register_prompt_can_be_declined(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+    result = CliRunner().invoke(_register_prompt_command("label", tmp_path / "id_ed25519"), input="n\n")
+
+    assert result.exit_code == 0, result.output
+    assert load_registry() == {}
+
+
+def test_wizard_register_prompt_accepts_a_port(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+    result = CliRunner().invoke(
+        _register_prompt_command("label", tmp_path / "id_ed25519"), input="y\nroot@example.com\n2222\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert load_registry()["label"].port == 2222
+
+
+def test_wizard_register_prompt_reasks_on_a_destination_without_user_at_host(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+    result = CliRunner().invoke(
+        _register_prompt_command("label", tmp_path / "id_ed25519"), input="y\nexample.com\nroot@example.com\n\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "must be user@host" in result.output
+    assert load_registry()["label"].host == "example.com"
+
+
+def test_wizard_register_prompt_asks_for_a_name_when_there_is_no_label(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+    result = CliRunner().invoke(
+        _register_prompt_command("", tmp_path / "id_ed25519"), input="y\n   \nmyhost\nroot@example.com\n\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "plain `ssh <name>`" in result.output
+    assert load_registry()["myhost"].host == "example.com"
+
+
+def test_register_flag_needs_a_label_to_name_the_host_block(tmp_path):
+    result = CliRunner().invoke(
+        main,
+        [
+            *("--kdf", "pbkdf2", "--iterations", "2", "--seed", "x"),
+            *("--output", str(tmp_path / "key")),
+            *("--register", "root@example.com"),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--register needs --label" in result.output
+    assert not (tmp_path / "key").exists()
+
+
+def test_register_flag_rejects_a_destination_without_user_at_host(tmp_path):
+    result = CliRunner().invoke(
+        main,
+        [
+            *("--kdf", "pbkdf2", "--iterations", "2", "--seed", "x", "--label", "l"),
+            *("--output", str(tmp_path / "key")),
+            *("--register", "example.com"),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "USER@HOST" in result.output
+    assert not (tmp_path / "key").exists()
+
+
+def test_register_port_flag_without_register_flag_fails_before_deriving(tmp_path):
+    result = CliRunner().invoke(
+        main,
+        [
+            *("--kdf", "pbkdf2", "--iterations", "2", "--seed", "x"),
+            *("--output", str(tmp_path / "key")),
+            *("--register-port", "2222"),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "--register-port needs --register" in result.output
+    assert not (tmp_path / "key").exists()
+
+
+def test_register_flag_registers_the_generated_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    key_path = tmp_path / "key"
+
+    result = CliRunner().invoke(
+        main,
+        [
+            *("--kdf", "pbkdf2", "--iterations", "2", "--seed", "x"),
+            *("--label", "isik:personal:contaboo"),
+            *("--output", str(key_path)),
+            *("--register", "root@contaboo.com"),
+            *("--register-port", "2222"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Registered isik:personal:contaboo -> root@contaboo.com" in result.output
+    entry = load_registry()["isik:personal:contaboo"]
+    assert (entry.user, entry.host, entry.port, entry.key) == ("root", "contaboo.com", 2222, key_path)
+
+
+def test_a_full_interactive_run_generates_and_registers_in_one_go(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setattr(questionary, "select", _fake_select)
+    key_path = tmp_path / "id_ed25519"
+
+    answers = [
+        "s",  # seed passphrase
+        "s",  # ... confirmed
+        "isik:personal:contaboo",  # label
+        "2",  # pbkdf2 iterations
+        "",  # salt digest size: default
+        str(key_path),  # output path
+        "",  # comment
+        "",  # key passphrase: none
+        "",  # ... confirmed
+        "y",  # register it
+        "root@contaboo.com",  # destination
+        "",  # default ssh port
+    ]
+
+    result = CliRunner().invoke(main, [], input="\n".join(answers) + "\n")
+
+    assert result.exit_code == 0, result.output
+    assert key_path.exists()
+    assert "Run: ssh isik:personal:contaboo" in result.output
+    entry = load_registry()["isik:personal:contaboo"]
+    assert (entry.user, entry.host, entry.key) == ("root", "contaboo.com", key_path)

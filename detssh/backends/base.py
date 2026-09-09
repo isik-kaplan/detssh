@@ -196,3 +196,5 @@ def write_keypair_and_recap(seed_bytes, output, comment, recap, key_passphrase="
     click.echo("To recreate this exact key, remember your passphrase (keep it secret) plus:")
     for name, value in (*recap, ("algorithm", "ed25519")):
         click.echo(f"  {name:<18} {value}")
+
+    return priv_path, pub_path

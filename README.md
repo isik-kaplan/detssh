@@ -36,11 +36,26 @@ sitting directly in `~/.ssh/` - a key written under `--output` or a per-label
 subdirectory needs either `-i <path>`, a hand-written `Host` block in
 `~/.ssh/config`, or `ssh-add`ing it to your agent.
 
-`detssh ssh` automates the config-file route:
+The interactive run offers to do this for you at the end, right after it
+writes the key:
+```
+Register this key so `ssh isik:personal:contabo` connects with it? [Y/n]: y
+Destination (user@host): root@contabo.com
+Non-default ssh port:
+
+Registered isik:personal:contabo -> root@contabo.com
+Run: ssh isik:personal:contabo
+```
+The label you derived the key with doubles as the `Host` name, so there's
+nothing extra to type. In flag mode, `--register root@contabo.com` (plus
+`--register-port` when it isn't 22) does the same thing, and needs `--label`
+for that reason. Declining changes nothing about the key that was written.
+
+For a key you already have, `detssh ssh register` reaches the same end state:
 ```
 detssh ssh register isik:personal:contabo root@contabo.com --key ~/.ssh/isik:personal:contabo/id_ed25519
 ```
-This records the label in `~/.config/detssh/config`, generates a `Host` block
+Either route records the label in `~/.config/detssh/config`, generates a `Host` block
 for it in a detssh-managed file, and adds a single `Include` line to
 `~/.ssh/config` (once, at the top) that pulls it in. After that,
 `ssh isik:personal:contabo` just works - through real `ssh`, nothing routed

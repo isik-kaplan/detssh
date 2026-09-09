@@ -18,6 +18,7 @@ from detssh.backends.base import (
 from detssh.backends.kdf.base import KDFError
 from detssh.backends.salt.base import SaltError
 from detssh.keygen import COMMENT_FORBIDDEN_CHARS, ED25519_SEED_LENGTH, default_output_path
+from detssh.ssh_cli import OptionalPort, register_entry, split_destination
 
 
 DEFAULT_KDF = "argon2id"
@@ -83,6 +84,45 @@ def _help_note(kdf_cls, salt_cls):
     )
 
 
+def _registration_from_flags(label, values):
+    """Validate --register/--register-port up front, so a typo surfaces now rather than
+    after a minute of key derivation. Returns None when --register wasn't passed."""
+    destination, port = values.get("register"), values.get("register_port")
+    if destination is None:
+        if port is not None:
+            raise click.UsageError("--register-port needs --register")
+        return None
+    if not label:
+        raise click.UsageError("--register needs --label: the label names the `Host` block in ~/.ssh/config")
+    parsed = split_destination(destination)
+    if parsed is None:
+        raise click.UsageError("--register must be USER@HOST")
+    user, host = parsed
+    return label, user, host, port
+
+
+def _register_interactively(label, key_path):
+    """Offer to wire the key we just wrote into ~/.ssh/config. Declining leaves the key
+    exactly as written - `detssh ssh register` does the same thing later on."""
+    if label:
+        question = f"Register this key so `ssh {label}` connects with it?"
+    else:
+        question = "Register this key in ~/.ssh/config so plain `ssh <name>` connects with it?"
+    if not click.confirm(question, default=bool(label)):
+        return
+
+    name = label
+    while not name:
+        name = click.prompt("Name to connect with, as in `ssh <name>`").strip()
+
+    while (parsed := split_destination(click.prompt("Destination (user@host)"))) is None:
+        click.echo("Error: destination must be user@host")
+    user, host = parsed
+
+    port = click.prompt("Non-default ssh port", default="", show_default=False, type=OptionalPort())
+    register_entry(name, user, host, key=key_path, port=port)
+
+
 class KDFSaltCommand(click.Command):
     def parse_args(self, ctx, args):
         kdf_name = _peek(args, "--kdf", DEFAULT_KDF)
@@ -100,6 +140,20 @@ class KDFSaltCommand(click.Command):
                 is_flag=True,
                 help="Create the output path's parent directories if missing, even outside ~/.ssh. "
                 "Interactive mode still confirms before creating one outside ~/.ssh.",
+            ),
+            click.Option(
+                ["--register"],
+                metavar="USER@HOST",
+                default=None,
+                help="Register the generated key so plain `ssh <label>` connects to USER@HOST, as "
+                "`detssh ssh register` would. Needs --label, which names the `Host` block. Interactive "
+                "mode asks about this at the end instead.",
+            ),
+            click.Option(
+                ["--register-port"],
+                type=OptionalPort(),
+                default=None,
+                help="Non-default ssh port to register with --register.",
             ),
             click.Option(
                 ["--force-allow-soft-constraints"],
@@ -162,6 +216,8 @@ def main(overwrite_files, create_parent_dirs, **values):
     if any(char in resolved["comment"] for char in COMMENT_FORBIDDEN_CHARS):
         raise click.UsageError("--comment must not contain newlines")
 
+    registration = None if interactive else _registration_from_flags(resolved["label"], values)
+
     try:
         salt_bytes = salt_cls.digest(resolved["label"], resolved)
     except SaltError as e:
@@ -189,7 +245,7 @@ def main(overwrite_files, create_parent_dirs, **values):
         ("hash-len", resolved["hash_len"]),
     )
 
-    write_keypair_and_recap(
+    priv_path, _ = write_keypair_and_recap(
         seed_bytes,
         resolved["output"],
         resolved["comment"],
@@ -197,6 +253,13 @@ def main(overwrite_files, create_parent_dirs, **values):
         key_passphrase=resolved["key_passphrase"],
         create_parent_dirs=create_parent_dirs,
     )
+
+    click.echo()
+    if interactive:
+        _register_interactively(resolved["label"], priv_path)
+    elif registration:
+        label, user, host, port = registration
+        register_entry(label, user, host, key=priv_path, port=port)
 
 
 def run():

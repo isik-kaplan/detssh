@@ -1,7 +1,7 @@
 from click.testing import CliRunner
 
 from detssh.registry import load_registry
-from detssh.ssh_cli import ssh
+from detssh.ssh_cli import OptionalPort, split_destination, ssh
 from detssh.ssh_config import ssh_config_path
 
 
@@ -155,3 +155,58 @@ def test_a_malformed_registry_fails_cleanly_instead_of_raising(monkeypatch, tmp_
 
     assert result.exit_code != 0
     assert "couldn't parse" in result.output
+
+
+def test_register_rejects_a_port_that_is_not_a_number(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    key_path = _key(tmp_path)
+
+    result = CliRunner().invoke(
+        ssh, ["register", "label", "root@example.com", "--key", str(key_path), "--port", "2222x"]
+    )
+
+    assert result.exit_code != 0
+    assert "not an integer" in result.output
+
+
+def test_register_rejects_a_port_outside_the_valid_range(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    key_path = _key(tmp_path)
+
+    result = CliRunner().invoke(
+        ssh, ["register", "label", "root@example.com", "--key", str(key_path), "--port", "70000"]
+    )
+
+    assert result.exit_code != 0
+    assert "65535" in result.output
+
+
+def test_optional_port_reads_a_blank_answer_as_no_port():
+    assert OptionalPort().convert("", None, None) is None
+    assert OptionalPort().convert("   ", None, None) is None
+
+
+def test_optional_port_accepts_a_port_in_range():
+    assert OptionalPort().convert("2222", None, None) == 2222
+
+
+def test_split_destination_returns_none_for_anything_but_user_at_host():
+    assert split_destination("root@example.com") == ("root", "example.com")
+    assert split_destination("example.com") is None
+    assert split_destination("@example.com") is None
+    assert split_destination("root@") is None
+
+
+def test_register_entry_stores_an_absolute_key_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    _key(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    runner = CliRunner()
+    result = runner.invoke(ssh, ["register", "label", "root@example.com", "--key", "id_ed25519"])
+
+    assert result.exit_code == 0, result.output
+    assert load_registry()["label"].key.is_absolute()

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-09
+
+### Added
+
+- The interactive run now offers to register the key it just wrote, so
+  generating a key and getting `ssh <label>` to use it is one command
+  instead of two. The label doubles as the `Host` name; declining leaves
+  the key exactly as written.
+- `--register <user>@<host>` and `--register-port` do the same in flag mode.
+  `--register` needs `--label`, since the label names the `Host` block. Both
+  are validated before key derivation starts, so a typo doesn't cost you a
+  minute of argon2 first.
+
+### Changed
+
+- `detssh ssh register --port` now rejects non-numeric and out-of-range
+  ports up front instead of writing them into the generated `Host` block.
+- Registered `IdentityFile` paths are stored absolute. A relative `--key`
+  used to be recorded as given, which `ssh` would then resolve against
+  whatever directory it happened to be run from.
+
 ## [0.3.0] - 2026-08-23
 
 ### Added
