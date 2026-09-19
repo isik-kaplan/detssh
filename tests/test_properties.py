@@ -569,46 +569,91 @@ def test_confirm_overwrite_never_raises_for_a_nonexistent_path(name, overwrite_f
         confirm_overwrite(path, overwrite_files)
 
 
-def test_confirm_create_parent_dirs_is_a_noop_when_the_flag_is_off(monkeypatch, tmp_path):
-    monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
-    confirm_create_parent_dirs(tmp_path / "missing" / "key", create_parent_dirs=False, interactive=True)
-
-
 def test_confirm_create_parent_dirs_is_a_noop_when_the_parent_already_exists(monkeypatch, tmp_path):
     monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
-    confirm_create_parent_dirs(tmp_path / "key", create_parent_dirs=True, interactive=True)
+    assert confirm_create_parent_dirs(tmp_path / "key", create_parent_dirs=True, interactive=True) is True
 
 
 def test_confirm_create_parent_dirs_is_a_noop_for_the_ssh_dir_itself(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
-    confirm_create_parent_dirs(tmp_path / ".ssh" / "id_ed25519", create_parent_dirs=True, interactive=True)
+    result = confirm_create_parent_dirs(tmp_path / ".ssh" / "id_ed25519", create_parent_dirs=True, interactive=True)
+    assert result is True
 
 
 def test_confirm_create_parent_dirs_skips_the_prompt_for_a_path_under_ssh_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
-    confirm_create_parent_dirs(tmp_path / ".ssh" / "label" / "key", create_parent_dirs=True, interactive=True)
+    result = confirm_create_parent_dirs(tmp_path / ".ssh" / "label" / "key", create_parent_dirs=True, interactive=True)
+    assert result is True
 
 
-def test_confirm_create_parent_dirs_skips_the_prompt_when_not_interactive(monkeypatch, tmp_path):
+def test_confirm_create_parent_dirs_skips_the_prompt_when_not_interactive_and_flag_is_on(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(click, "confirm", lambda *a, **k: pytest.fail("should not prompt"))
-    confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=True, interactive=False)
+    result = confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=True, interactive=False)
+    assert result is True
 
 
-def test_confirm_create_parent_dirs_proceeds_when_confirmed(monkeypatch, tmp_path, capsys):
+def test_confirm_create_parent_dirs_fails_fast_when_not_interactive_and_flag_is_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(click.UsageError, match="--create-parent-dirs"):
+        confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=False, interactive=False)
+
+
+def test_confirm_create_parent_dirs_proceeds_when_confirmed_outside_ssh(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(click, "confirm", lambda *a, **k: True)
-    confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=True, interactive=True)
+    result = confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=True, interactive=True)
+    assert result is True
     assert "outside ~/.ssh" in capsys.readouterr().out
 
 
-def test_confirm_create_parent_dirs_aborts_when_declined(monkeypatch, tmp_path):
+def test_confirm_create_parent_dirs_aborts_when_declined_outside_ssh(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(click, "confirm", lambda *a, **k: False)
     with pytest.raises(click.Abort):
         confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=True, interactive=True)
+
+
+def test_confirm_create_parent_dirs_prompts_when_interactive_and_flag_is_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+
+    def fake_confirm(question, default=None):
+        seen["question"], seen["default"] = question, default
+        return True
+
+    monkeypatch.setattr(click, "confirm", fake_confirm)
+    result = confirm_create_parent_dirs(tmp_path / ".ssh" / "label" / "key", create_parent_dirs=False, interactive=True)
+
+    assert result is True
+    assert "doesn't exist. Create it?" in seen["question"]
+    assert seen["default"] is True
+
+
+def test_confirm_create_parent_dirs_aborts_when_declined_and_flag_is_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(click, "confirm", lambda *a, **k: False)
+    with pytest.raises(click.Abort):
+        confirm_create_parent_dirs(tmp_path / ".ssh" / "label" / "key", create_parent_dirs=False, interactive=True)
+
+
+def test_confirm_create_parent_dirs_warns_when_interactive_flag_off_and_outside_ssh(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = {}
+
+    def fake_confirm(question, default=None):
+        seen["question"], seen["default"] = question, default
+        return True
+
+    monkeypatch.setattr(click, "confirm", fake_confirm)
+    result = confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=False, interactive=True)
+
+    assert result is True
+    assert seen["question"] == "Create it anyway?"
+    assert seen["default"] is False
+    assert "outside ~/.ssh" in capsys.readouterr().out
 
 
 @given(
@@ -848,6 +893,13 @@ def test_write_keypair_and_recap_converts_value_error_to_usage_error(tmp_path):
     with pytest.raises(click.UsageError, match="newline"):
         write_keypair_and_recap(b"\x00" * 32, tmp_path / "key", comment="bad\ncomment", recap=(), key_passphrase="")
     assert not (tmp_path / "key").exists()
+
+
+def test_write_keypair_and_recap_converts_os_error_to_click_exception(tmp_path):
+    missing_dir_output = tmp_path / "nonexistent_dir" / "key"
+    with pytest.raises(click.ClickException, match="couldn't write"):
+        write_keypair_and_recap(b"\x00" * 32, missing_dir_output, comment="", recap=(), key_passphrase="")
+    assert not missing_dir_output.exists()
 
 
 def test_kdf_backend_base_run_is_not_implemented():

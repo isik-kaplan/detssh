@@ -47,12 +47,21 @@ DEFAULTS = {
 
 
 def _peek(args, flag, default):
+    """Guess a flag's value before click does the real parsing, so we know which
+    backend's options to register. Skips past a consumed value instead of scanning
+    it as a token in its own right, so a value that happens to equal the flag itself
+    (e.g. `--kdf --kdf`) isn't misread as a second occurrence of the flag."""
     value = default
-    for i, arg in enumerate(args):
+    i = 0
+    while i < len(args):
+        arg = args[i]
         if arg == flag and i + 1 < len(args):
             value = args[i + 1]
-        elif arg.startswith(flag + "="):
+            i += 2
+            continue
+        if arg.startswith(flag + "="):
             value = arg.split("=", 1)[1]
+        i += 1
     return value
 
 
@@ -139,7 +148,8 @@ class KDFSaltCommand(click.Command):
                 ["--create-parent-dirs"],
                 is_flag=True,
                 help="Create the output path's parent directories if missing, even outside ~/.ssh. "
-                "Interactive mode still confirms before creating one outside ~/.ssh.",
+                "Interactive mode prompts for this itself if you don't pass the flag; "
+                "non-interactive mode requires it explicitly.",
             ),
             click.Option(
                 ["--register"],
@@ -227,7 +237,7 @@ def main(overwrite_files, create_parent_dirs, **values):
         raise click.UsageError(f"{kdf_name} {salt_error}")
 
     confirm_overwrite(resolved["output"], overwrite_files)
-    confirm_create_parent_dirs(resolved["output"], create_parent_dirs, interactive)
+    create_parent_dirs = confirm_create_parent_dirs(resolved["output"], create_parent_dirs, interactive)
 
     click.echo("Deriving key...")
     try:

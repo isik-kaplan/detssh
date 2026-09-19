@@ -37,7 +37,27 @@ def test_missing_output_directory_gives_a_clean_error_not_a_traceback(tmp_path):
 
     assert result.exit_code != 0
     assert result.exc_info[0] is SystemExit
-    assert "No such file or directory" in result.output
+    assert "--create-parent-dirs" in result.output
+
+
+def test_create_parent_dirs_flag_creates_a_missing_output_directory(tmp_path):
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "--kdf",
+            "pbkdf2",
+            "--seed",
+            "x",
+            "--output",
+            str(tmp_path / "nonexistent_dir" / "key"),
+            "--overwrite-files",
+            "--create-parent-dirs",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "nonexistent_dir" / "key").exists()
 
 
 def test_scrypt_bad_cost_gives_a_clean_error_not_a_traceback(tmp_path):
@@ -571,6 +591,33 @@ def test_register_flag_registers_the_generated_key(monkeypatch, tmp_path):
     assert "Registered isik:personal:contaboo -> root@contaboo.com" in result.output
     entry = load_registry()["isik:personal:contaboo"]
     assert (entry.user, entry.host, entry.port, entry.key) == ("root", "contaboo.com", 2222, key_path)
+
+
+def test_a_full_interactive_run_creates_a_missing_parent_dir_under_ssh(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setattr(questionary, "select", _fake_select)
+    key_path = tmp_path / ".ssh" / "isik:personal:contaboo" / "id_ed25519"
+
+    answers = [
+        "s",  # seed passphrase
+        "s",  # ... confirmed
+        "isik:personal:contaboo",  # label
+        "2",  # pbkdf2 iterations
+        "",  # salt digest size: default
+        str(key_path),  # output path, parent doesn't exist yet
+        "",  # comment
+        "",  # key passphrase: none
+        "",  # ... confirmed
+        "",  # create the missing parent dir? default: yes
+        "n",  # register it: no
+    ]
+
+    result = CliRunner().invoke(main, [], input="\n".join(answers) + "\n")
+
+    assert result.exit_code == 0, result.output
+    assert "doesn't exist. Create it?" in result.output
+    assert key_path.exists()
 
 
 def test_a_full_interactive_run_generates_and_registers_in_one_go(monkeypatch, tmp_path):

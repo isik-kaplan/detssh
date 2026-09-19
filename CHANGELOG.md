@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-19
+
+### Added
+
+- Interactive mode now offers to create a missing output-path parent
+  directory itself, instead of requiring `--create-parent-dirs` up front.
+  It defaults to yes for a path under `~/.ssh` and to no (with a warning)
+  for one outside it - the same rule `--create-parent-dirs` already used.
+
+### Changed
+
+- Flag mode now fails fast with a clear error when the output path's
+  parent is missing and `--create-parent-dirs` wasn't passed, instead of
+  running key derivation first and then failing on a raw `OSError`.
+
+### Fixed
+
+- `--kdf`/`--salt-algo` backend detection (used to decide which options to
+  show before click's real parsing runs) could misread a flag's own value
+  as a second occurrence of the flag when the value happened to equal the
+  flag string itself (e.g. `--kdf --kdf`).
+
 ## [0.4.0] - 2026-09-09
 
 ### Added

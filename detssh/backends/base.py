@@ -164,13 +164,36 @@ def confirm_overwrite(output, overwrite_files):
 
 
 def confirm_create_parent_dirs(output, create_parent_dirs, interactive):
+    """Decide whether to create the output path's missing parent directories.
+
+    Returns the (possibly updated) flag for write_keypair_and_recap to act on. Flag
+    mode requires --create-parent-dirs up front and fails fast otherwise, so a typo
+    surfaces before key derivation rather than as a raw OSError after it. Interactive
+    mode prompts for the same decision instead, defaulting to yes under ~/.ssh and to
+    no (with a warning) elsewhere - matching what --create-parent-dirs would have done.
+    """
     parent = Path(output).parent
-    if not create_parent_dirs or parent.exists() or parent == ssh_dir():
-        return
-    if interactive and not parent.is_relative_to(ssh_dir()):
+    if parent.exists() or parent == ssh_dir():
+        return create_parent_dirs
+
+    outside = not parent.is_relative_to(ssh_dir())
+
+    if not interactive:
+        if not create_parent_dirs:
+            raise click.UsageError(f"{_display_path(parent)} doesn't exist. Pass --create-parent-dirs to create it.")
+        return True
+
+    if not create_parent_dirs and not outside:
+        question, default = f"{_display_path(parent)} doesn't exist. Create it?", True
+    elif outside:
         click.echo(f"Warning: {_display_path(parent)} is outside ~/.ssh.")
-        if not click.confirm("Create it anyway?"):
-            raise click.Abort()
+        question, default = "Create it anyway?", False
+    else:
+        return True
+
+    if not click.confirm(question, default=default):
+        raise click.Abort()
+    return True
 
 
 def write_keypair_and_recap(seed_bytes, output, comment, recap, key_passphrase="", create_parent_dirs=False):
