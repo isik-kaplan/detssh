@@ -1,0 +1,47 @@
+Usage: main [OPTIONS]
+
+Options:
+  --kdf [argon2id|argon2i|argon2d|scrypt|pbkdf2|bcrypt_pbkdf]
+                                  KDF backend
+                                  [default: argon2id]
+  --salt-algo [blake2b|blake2s|sha256|sha384|sha512|sha3_256|sha3_384|sha3_512]
+                                  Salt hash algorithm
+                                  [default: blake2b]
+  --seed TEXT                     Seed passphrase
+  --label TEXT                    Label
+  --iterations INTEGER            PBKDF2 iterations (soft max 50000000)
+                                  [default: 600000]
+  --output FILE                   Output path for the private key (ssh-keygen
+                                  style, e.g. ~/.ssh/id_ed25519)
+                                  [default: ~/.ssh/id_ed25519]
+  --comment TEXT                  Comment for the public key
+  --key-passphrase TEXT           Passphrase to encrypt the private key file
+                                  with (leave empty for none)
+  --overwrite-files               Overwrite existing output files without
+                                  asking.
+  --create-parent-dirs            Create the output path's parent directories if
+                                  missing, even outside ~/.ssh. Interactive mode
+                                  prompts for this itself if you don't pass the
+                                  flag; non-interactive mode requires it
+                                  explicitly.
+  --register USER@HOST            Register the generated key so plain `ssh
+                                  <label>` connects to USER@HOST, as `detssh ssh
+                                  register` would. Needs --label, which names
+                                  the `Host` block. Interactive mode asks about
+                                  this at the end instead.
+  --register-port PORT            Non-default ssh port to register with
+                                  --register.
+  --force-allow-soft-constraints  Flag mode only: skip the 'this may take a long
+                                  time' confirmation for oversized cost knobs.
+                                  Interactive mode always asks.
+  -h, --help                      Show this message and exit.
+
+  Options below are for --kdf=pbkdf2 --salt-algo=sha256 (defaults, unless you passed both already).
+  --kdf choices:       argon2id, argon2i, argon2d, scrypt, pbkdf2, bcrypt_pbkdf
+  --salt-algo choices: blake2b, blake2s, sha256, sha384, sha512, sha3_256, sha3_384, sha3_512
+  
+  Each combination has its own options. To see another one's:
+    detssh --kdf pbkdf2 --salt-algo sha256 --help
+  
+  To use a generated key with plain `ssh <label>`, see:
+    detssh ssh --help

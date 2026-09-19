@@ -11,6 +11,7 @@ from detssh.backends.base import confirm_overwrite
 from detssh.cli import _peek, _register_interactively, main, run
 from detssh.keygen import default_output_path, keypair_from_seed, write_keypair
 from detssh.registry import load_registry
+from detssh.ssh_config import hosts_file_path, ssh_config_path
 
 
 def test_confirm_overwrite_accepts_plain_string_path(tmp_path):
@@ -22,7 +23,7 @@ def test_write_keypair_rejects_comment_with_newline(tmp_path):
     key_path = tmp_path / "key"
 
     for bad_comment in ("line1\nline2", "line1\rline2"):
-        with pytest.raises(ValueError, match="newline"):
+        with pytest.raises(ValueError, match="^comment must not contain newlines$"):
             write_keypair(private_key, public_key, key_path, comment=bad_comment)
 
     assert not key_path.exists()
@@ -58,6 +59,26 @@ def test_create_parent_dirs_flag_creates_a_missing_output_directory(tmp_path):
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / "nonexistent_dir" / "key").exists()
+
+
+def test_invalid_kdf_value_gives_a_clean_error_not_a_traceback():
+    # parse_args peeks --kdf before click's real parsing runs, to decide which options to
+    # register; an unrecognized value must still fall back cleanly to the default
+    # backend's options (and get rejected properly once real parsing runs), not crash
+    # trying to build option schema for a None backend class.
+    result = CliRunner().invoke(main, ["--kdf", "totally-bogus", "--seed", "x"])
+
+    assert result.exit_code != 0
+    assert result.exc_info[0] is SystemExit
+    assert "Invalid value for '--kdf'" in result.output
+
+
+def test_invalid_salt_algo_value_gives_a_clean_error_not_a_traceback():
+    result = CliRunner().invoke(main, ["--salt-algo", "totally-bogus", "--seed", "x"])
+
+    assert result.exit_code != 0
+    assert result.exc_info[0] is SystemExit
+    assert "Invalid value for '--salt-algo'" in result.output
 
 
 def test_scrypt_bad_cost_gives_a_clean_error_not_a_traceback(tmp_path):
@@ -148,6 +169,17 @@ def test_peek_takes_last_occurrence_of_a_repeated_flag():
 def test_peek_takes_last_occurrence_with_equals_form():
     args = ["--kdf=argon2id", "--kdf=pbkdf2"]
     assert _peek(args, "--kdf", "default") == "pbkdf2"
+
+
+def test_peek_falls_back_to_default_for_a_trailing_flag_with_no_value():
+    # A flag with nothing after it isn't a "--kdf VALUE" pair to consume - click's real
+    # parsing will reject it later; _peek just shouldn't index past the end of args.
+    assert _peek(["--kdf"], "--kdf", "default") == "default"
+    assert _peek(["--seed", "x", "--kdf"], "--kdf", "default") == "default"
+
+
+def test_peek_equals_form_only_splits_on_the_first_equals_sign():
+    assert _peek(["--kdf=a=b"], "--kdf", "default") == "a=b"
 
 
 def test_repeated_kdf_flag_rejects_options_irrelevant_to_the_resolved_backend(tmp_path):
@@ -447,6 +479,28 @@ def test_run_dispatches_everything_else_to_the_keygen_command(monkeypatch, tmp_p
     assert (tmp_path / ".ssh" / "id_ed25519").exists()
 
 
+def test_run_passes_the_ssh_prog_name_through_to_the_ssh_group(monkeypatch, capsys):
+    # sys.argv[0] deliberately isn't "detssh", so a "Usage: detssh ssh ..." line can only
+    # come from the explicit prog_name= argument, not from click's own fallback derivation.
+    monkeypatch.setattr("sys.argv", ["not-detssh", "ssh", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        run()
+
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out.splitlines()[0] == "Usage: detssh ssh [OPTIONS] COMMAND [ARGS]..."
+
+
+def test_run_passes_the_keygen_prog_name_through_to_main(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["not-detssh", "--help"])
+
+    with pytest.raises(SystemExit) as exc_info:
+        run()
+
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out.splitlines()[0] == "Usage: detssh [OPTIONS]"
+
+
 def _register_prompt_command(label, key_path):
     @click.command()
     def cmd():
@@ -472,7 +526,14 @@ def test_wizard_register_prompt_registers_the_label(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 0, result.output
-    assert "Run: ssh isik:personal:contaboo" in result.output
+    assert result.output == (
+        "Register this key so `ssh isik:personal:contaboo` connects with it? [Y/n]: y\n"
+        "Destination (user@host): root@contaboo.com\n"
+        "Non-default ssh port: \n"
+        "Registered isik:personal:contaboo -> root@contaboo.com\n"
+        f"Added 'Include {hosts_file_path()}' to {ssh_config_path()}\n"
+        "Run: ssh isik:personal:contaboo\n"
+    )
     entry = load_registry()["isik:personal:contaboo"]
     assert (entry.user, entry.host, entry.port) == ("root", "contaboo.com", None)
     assert entry.key == key_path
@@ -485,6 +546,7 @@ def test_wizard_register_prompt_can_be_declined(monkeypatch, tmp_path):
     result = CliRunner().invoke(_register_prompt_command("label", tmp_path / "id_ed25519"), input="n\n")
 
     assert result.exit_code == 0, result.output
+    assert result.output == "Register this key so `ssh label` connects with it? [Y/n]: n\n"
     assert load_registry() == {}
 
 
@@ -497,6 +559,7 @@ def test_wizard_register_prompt_accepts_a_port(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 0, result.output
+    assert "Non-default ssh port: 2222\n" in result.output
     assert load_registry()["label"].port == 2222
 
 
@@ -509,8 +572,26 @@ def test_wizard_register_prompt_reasks_on_a_destination_without_user_at_host(mon
     )
 
     assert result.exit_code == 0, result.output
-    assert "must be user@host" in result.output
+    assert (
+        "Destination (user@host): example.com\n"
+        "Error: destination must be user@host\n"
+        "Destination (user@host): root@example.com\n"
+    ) in result.output
     assert load_registry()["label"].host == "example.com"
+
+
+def test_wizard_register_prompt_reasks_on_a_non_integer_port(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+    result = CliRunner().invoke(
+        _register_prompt_command("label", tmp_path / "id_ed25519"),
+        input="y\nroot@example.com\nabc\n2222\n",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "'abc' is not an integer" in result.output
+    assert load_registry()["label"].port == 2222
 
 
 def test_wizard_register_prompt_asks_for_a_name_when_there_is_no_label(monkeypatch, tmp_path):
@@ -522,7 +603,11 @@ def test_wizard_register_prompt_asks_for_a_name_when_there_is_no_label(monkeypat
     )
 
     assert result.exit_code == 0, result.output
-    assert "plain `ssh <name>`" in result.output
+    assert result.output.startswith(
+        "Register this key in ~/.ssh/config so plain `ssh <name>` connects with it? [y/N]: y\n"
+        "Name to connect with, as in `ssh <name>`:    \n"
+        "Name to connect with, as in `ssh <name>`: myhost\n"
+    )
     assert load_registry()["myhost"].host == "example.com"
 
 
@@ -537,7 +622,7 @@ def test_register_flag_needs_a_label_to_name_the_host_block(tmp_path):
     )
 
     assert result.exit_code != 0
-    assert "--register needs --label" in result.output
+    assert "Error: --register needs --label: the label names the `Host` block in ~/.ssh/config\n" in result.output
     assert not (tmp_path / "key").exists()
 
 
@@ -552,7 +637,7 @@ def test_register_flag_rejects_a_destination_without_user_at_host(tmp_path):
     )
 
     assert result.exit_code != 0
-    assert "USER@HOST" in result.output
+    assert "Error: --register must be USER@HOST\n" in result.output
     assert not (tmp_path / "key").exists()
 
 
@@ -567,7 +652,7 @@ def test_register_port_flag_without_register_flag_fails_before_deriving(tmp_path
     )
 
     assert result.exit_code != 0
-    assert "--register-port needs --register" in result.output
+    assert "Error: --register-port needs --register\n" in result.output
     assert not (tmp_path / "key").exists()
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "detssh"
-version = "0.5.0"
+version = "0.6.0"
 description = "Deterministic Ed25519 SSH key generation from a seed passphrase, via configurable KDF and salt-hash backends."
 readme = "README.md"
 authors = [
@@ -32,6 +32,7 @@ detssh = "detssh.cli:run"
 [tool.uv]
 dev-dependencies = [
     "hypothesis>=6.156.9",
+    "mutmut>=3.8.0",
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.9.0",
@@ -47,6 +48,7 @@ packages = ["detssh"]
 [tool.ruff]
 line-length = 120
 fix = true
+extend-exclude = ["mutants"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -71,3 +73,10 @@ show_missing = true
 exclude_lines = [
     "if __name__ == .__main__.:",
 ]
+
+[tool.mutmut]
+source_paths = ["detssh"]
+# --no-cov: mutmut only reruns the subset of tests covering a mutated line, so the
+# --cov-fail-under=100 gate in addopts would fail every mutant run for the wrong
+# reason. -q keeps per-mutant output down to a dot per test.
+pytest_add_cli_args = ["--no-cov", "-q"]

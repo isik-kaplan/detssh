@@ -34,3 +34,35 @@ jobs:
 
       - name: Run ruff
         run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+  mutation:
+    needs: test
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run mutation testing (no unlisted survivors allowed)
+        run: |
+          uv run mutmut run || true
+          uv run mutmut results
+          survivors=$(uv run mutmut results | grep 'survived$' | awk '{print $1}' | sed 's/:$//' | sort)
+          known=$(grep -v '^#' tests/mutmut_known_equivalents.txt | grep -v '^$' | sort)
+          new_survivors=$(comm -23 <(echo "$survivors") <(echo "$known"))
+          if [ -n "$new_survivors" ]; then
+            echo "New surviving mutant(s) not in tests/mutmut_known_equivalents.txt:"
+            echo "$new_survivors"
+            exit 1
+          fi
+          echo "No new survivors."

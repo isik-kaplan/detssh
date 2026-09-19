@@ -1,3 +1,4 @@
+import hashlib
 import os
 import string
 import tempfile
@@ -12,6 +13,7 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from detssh.backends.base import (
+    DEFAULT_TEXT_MARKER,
     Field,
     _display_path,
     build_options,
@@ -28,7 +30,14 @@ from detssh.backends.salt import ALGOS as SALT_ALGOS
 from detssh.backends.salt import validate_algos
 from detssh.backends.salt.base import SaltAlgo, SaltError
 from detssh.cli import KDFSaltCommand, _fields_for, _peek, main
-from detssh.keygen import COMMENT_FORBIDDEN_CHARS, keypair_from_seed, public_key_path, write_keypair
+from detssh.keygen import (
+    COMMENT_FORBIDDEN_CHARS,
+    ED25519_SEED_LENGTH,
+    keypair_from_seed,
+    public_key_path,
+    ssh_dir,
+    write_keypair,
+)
 
 
 FAST_KDF_PARAMS = {
@@ -341,6 +350,51 @@ def test_bcrypt_pbkdf_never_leaks_a_raw_exception(rounds):
     assert len(result) == 32
 
 
+def test_scrypt_passes_the_exact_maxmem_formula_to_hashlib(monkeypatch):
+    captured = {}
+
+    def fake_scrypt(password, *, salt, n, r, p, maxmem, dklen):
+        captured["maxmem"] = maxmem
+        return b"0" * dklen
+
+    monkeypatch.setattr(hashlib, "scrypt", fake_scrypt)
+    resolved = _resolved("scrypt", "correct horse battery staple")
+    resolved.update(cost=16, block_size=8, parallelism=2)
+
+    KDF_BACKENDS["scrypt"].run(resolved, b"0" * 16)
+
+    assert captured["maxmem"] == 128 * 8 * (16 + 2 + 2) * 2
+
+
+def test_scrypt_preserves_the_original_error_message():
+    resolved = _resolved("scrypt", "correct horse battery staple")
+    resolved.update(cost=3, block_size=8, parallelism=1)  # 3 is not a power of two
+    with pytest.raises(KDFError, match=r"^n must be a power of 2\.$"):
+        KDF_BACKENDS["scrypt"].run(resolved, b"0" * 16)
+
+
+def test_pbkdf2_preserves_the_original_error_message():
+    resolved = _resolved("pbkdf2", "correct horse battery staple")
+    resolved["iterations"] = 0
+    with pytest.raises(KDFError, match=r"^iteration value must be greater than 0\.$"):
+        KDF_BACKENDS["pbkdf2"].run(resolved, b"0" * 16)
+
+
+def test_bcrypt_pbkdf_preserves_the_original_error_message():
+    resolved = _resolved("bcrypt_pbkdf", "correct horse battery staple")
+    resolved["rounds"] = 0
+    with pytest.raises(KDFError, match=r"^rounds must be 1 or more$"):
+        KDF_BACKENDS["bcrypt_pbkdf"].run(resolved, b"0" * 16)
+
+
+@pytest.mark.parametrize("backend_name", ["argon2id", "argon2i", "argon2d"])
+def test_argon2_preserves_the_original_error_message(backend_name):
+    resolved = _resolved(backend_name, "correct horse battery staple")
+    resolved["iterations"] = 0
+    with pytest.raises(KDFError, match=r"^Time cost is too small$"):
+        KDF_BACKENDS[backend_name].run(resolved, b"0" * 16)
+
+
 @given(raw_seed=st.binary(min_size=0, max_size=20))
 @settings(max_examples=500, deadline=None)
 def test_every_kdf_backend_never_leaks_a_raw_exception_for_argv_like_seeds(raw_seed):
@@ -469,6 +523,69 @@ def test_keypair_from_seed_rejects_any_non_32_byte_seed(seed):
         keypair_from_seed(seed)
 
 
+def test_keypair_from_seed_rejects_wrong_length_with_the_lengths_in_the_message():
+    with pytest.raises(ValueError, match=f"Ed25519 seed must be {ED25519_SEED_LENGTH} bytes, got 5"):
+        keypair_from_seed(b"\x00" * 5)
+
+
+def test_write_keypair_comment_defaults_to_empty():
+    from cryptography.hazmat.primitives import serialization
+
+    private_key, public_key = keypair_from_seed(b"\x03" * 32)
+    public_bytes = public_key.public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
+    with tempfile.TemporaryDirectory() as tmp:
+        # No comment argument at all - the pub key line must be exactly the key, nothing
+        # appended after it (an empty default of "" and one of "XXXX" both end without a
+        # trailing space, so only an exact-content check tells them apart).
+        _, pub_path = write_keypair(private_key, public_key, Path(tmp) / "key")
+        assert pub_path.read_bytes() == public_bytes + b"\n"
+
+
+def test_write_keypair_key_passphrase_defaults_to_empty():
+    from cryptography.hazmat.primitives import serialization
+
+    private_key, public_key = keypair_from_seed(b"\x04" * 32)
+    with tempfile.TemporaryDirectory() as tmp:
+        output = Path(tmp) / "key"
+        # No key_passphrase argument at all - the key must load with no password.
+        write_keypair(private_key, public_key, output)
+        loaded = serialization.load_ssh_private_key(output.read_bytes(), password=None)
+        assert loaded.private_bytes_raw() == private_key.private_bytes_raw()
+
+
+def test_write_keypair_create_parent_dirs_defaults_to_false():
+    private_key, public_key = keypair_from_seed(b"\x05" * 32)
+    with tempfile.TemporaryDirectory() as tmp:
+        # No create_parent_dirs argument, and a parent that's neither pre-existing nor
+        # ssh_dir() - the write must fail instead of silently creating it.
+        output = Path(tmp) / "missing" / "key"
+        with pytest.raises(OSError):
+            write_keypair(private_key, public_key, output)
+
+
+def test_write_keypair_comment_suffix_is_exact():
+    from cryptography.hazmat.primitives import serialization
+
+    private_key, public_key = keypair_from_seed(b"\x06" * 32)
+    public_bytes = public_key.public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
+    with tempfile.TemporaryDirectory() as tmp:
+        _, empty = write_keypair(private_key, public_key, Path(tmp) / "empty", comment="")
+        assert empty.read_bytes() == public_bytes + b"\n"
+
+        _, commented = write_keypair(private_key, public_key, Path(tmp) / "commented", comment="my comment")
+        assert commented.read_bytes() == public_bytes + b" my comment\n"
+
+
+def test_write_keypair_mkdir_is_idempotent_for_an_already_existing_parent(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    ssh_dir().mkdir(mode=0o700)
+    private_key, public_key = keypair_from_seed(b"\x07" * 32)
+
+    # ssh_dir() already exists (created above) - write_keypair's own mkdir(..., exist_ok=?)
+    # call for it must not raise just because it's already there.
+    write_keypair(private_key, public_key, ssh_dir() / "id_ed25519")
+
+
 @given(default_value=st.integers())
 @settings(max_examples=3000)
 def test_resolve_fields_uses_default_when_not_interactive(default_value):
@@ -493,6 +610,12 @@ def test_resolve_fields_rejects_missing_or_empty_required_field(value):
         resolve_fields(fields, {"seed": value}, {}, interactive=False)
 
 
+def test_resolve_fields_required_error_names_the_flag_with_dashes():
+    fields = {"key_passphrase": Field("Key passphrase", kind="secret", required=True)}
+    with pytest.raises(click.UsageError, match=r"^--key-passphrase must not be empty$"):
+        resolve_fields(fields, {"key_passphrase": ""}, {}, interactive=False)
+
+
 @given(text=st.text(min_size=1))
 @settings(max_examples=3000)
 def test_resolve_fields_accepts_any_non_empty_required_value(text):
@@ -513,27 +636,34 @@ def test_optional_secret_ask_defaults_to_empty_so_it_can_be_skipped(monkeypatch)
     captured = {}
 
     def fake_prompt(message, **kwargs):
+        captured["message"] = message
         captured.update(kwargs)
         return kwargs.get("default")
 
     monkeypatch.setattr(click, "prompt", fake_prompt)
     field = Field("Key passphrase", kind="secret", required=False)
     assert field.ask(default="ignored") == ""
+    assert captured["message"] == "Key passphrase"
     assert captured["default"] == ""
     assert captured["confirmation_prompt"] is True
     assert captured["hide_input"] is True
+    assert captured["show_default"] is False
 
 
 def test_required_secret_ask_has_no_default_so_empty_input_reprompts(monkeypatch):
     captured = {}
 
     def fake_prompt(message, **kwargs):
+        captured["message"] = message
         captured.update(kwargs)
         return "whatever"
 
     monkeypatch.setattr(click, "prompt", fake_prompt)
     field = Field("Seed passphrase", kind="secret", required=True)
     field.ask(default="ignored")
+    assert captured["message"] == "Seed passphrase"
+    assert captured["hide_input"] is True
+    assert captured["confirmation_prompt"] is True
     assert "default" not in captured
 
 
@@ -558,6 +688,57 @@ def test_build_options_default_is_always_the_none_sentinel(name, kind, default_v
     assert option.opts == [f"--{name.replace('_', '-')}"]
 
 
+def test_build_options_int_kind_gets_int_type():
+    option = build_options({"n": Field("N", kind="int")})[0]
+    assert option.type is click.INT
+
+
+def test_build_options_select_kind_gets_click_choice_with_the_field_choices():
+    option = build_options({"backend": Field("Backend", kind="select", choices=("a", "b"))})[0]
+    assert isinstance(option.type, click.Choice)
+    assert option.type.choices == ("a", "b")
+
+
+def test_build_options_path_kind_gets_a_file_only_click_path_type():
+    option = build_options({"output": Field("Output", kind="path")})[0]
+    assert isinstance(option.type, click.Path)
+    assert option.type.dir_okay is False
+    assert option.type.type is Path
+
+
+def _help_default_note(option):
+    """The "[default: ...]" suffix build_options tucks after DEFAULT_TEXT_MARKER, or None
+    if the field has no default worth noting."""
+    if DEFAULT_TEXT_MARKER not in option.help:
+        return None
+    return option.help.split(DEFAULT_TEXT_MARKER, 1)[1]
+
+
+def test_build_options_help_shows_the_raw_default_for_a_non_path_field():
+    # A value that _display_path would rewrite to "~/looks-like-a-path" if build_options
+    # wrongly ran it through _display_path for a non-path field - it must show as-is.
+    value = str(Path.home() / "looks-like-a-path")
+    option = build_options({"label": Field("Label", kind="text")}, {"label": value})[0]
+    assert _help_default_note(option) == f"[default: {value}]"
+
+
+def test_build_options_help_shows_the_display_path_for_a_path_field():
+    value = Path.home() / "somewhere"
+    option = build_options({"output": Field("Output", kind="path")}, {"output": value})[0]
+    assert _help_default_note(option) == "[default: ~/somewhere]"
+
+
+def test_build_options_calls_a_callable_default_for_the_help_text():
+    option = build_options({"label": Field("Label", kind="text")}, {"label": lambda: "computed"})[0]
+    assert _help_default_note(option) == "[default: computed]"
+
+
+@pytest.mark.parametrize("empty_default", [None, ""])
+def test_build_options_omits_the_default_note_for_none_and_empty_string(empty_default):
+    option = build_options({"label": Field("Label", kind="text")}, {"label": empty_default})[0]
+    assert _help_default_note(option) is None
+
+
 @given(
     name=st.text(alphabet=string.ascii_letters + string.digits, min_size=1, max_size=10),
     overwrite_files=st.booleans(),
@@ -567,6 +748,33 @@ def test_confirm_overwrite_never_raises_for_a_nonexistent_path(name, overwrite_f
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / f"nonexistent-{name}"
         confirm_overwrite(path, overwrite_files)
+
+
+def test_confirm_overwrite_prompts_with_the_exact_message_when_only_the_private_key_exists(monkeypatch, tmp_path):
+    output = tmp_path / "key"
+    output.write_text("x")
+    seen = {}
+    monkeypatch.setattr(click, "confirm", lambda message: seen.setdefault("message", message) or True)
+
+    confirm_overwrite(output, overwrite_files=False)
+
+    assert seen["message"] == f"{output} already exists. Overwrite?"
+
+
+def test_confirm_overwrite_prompts_when_only_the_public_key_exists(monkeypatch, tmp_path):
+    output = tmp_path / "key"
+    (tmp_path / "key.pub").write_text("x")
+    seen = {}
+    monkeypatch.setattr(click, "confirm", lambda message: seen.setdefault("message", message) or True)
+
+    confirm_overwrite(output, overwrite_files=False)
+
+    assert seen["message"] == f"{output} already exists. Overwrite?"
+
+
+def test_field_hint_joins_multiple_parts_with_a_comma_and_space():
+    field = Field("x", kind="int", min_value=1, max_value=10, soft_max=5)
+    assert field.hint() == " (1-10, soft max 5)"
 
 
 def test_confirm_create_parent_dirs_is_a_noop_when_the_parent_already_exists(monkeypatch, tmp_path):
@@ -597,8 +805,9 @@ def test_confirm_create_parent_dirs_skips_the_prompt_when_not_interactive_and_fl
 
 def test_confirm_create_parent_dirs_fails_fast_when_not_interactive_and_flag_is_off(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    with pytest.raises(click.UsageError, match="--create-parent-dirs"):
+    with pytest.raises(click.UsageError) as exc_info:
         confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=False, interactive=False)
+    assert str(exc_info.value) == "~/elsewhere doesn't exist. Pass --create-parent-dirs to create it."
 
 
 def test_confirm_create_parent_dirs_proceeds_when_confirmed_outside_ssh(monkeypatch, tmp_path, capsys):
@@ -606,7 +815,7 @@ def test_confirm_create_parent_dirs_proceeds_when_confirmed_outside_ssh(monkeypa
     monkeypatch.setattr(click, "confirm", lambda *a, **k: True)
     result = confirm_create_parent_dirs(tmp_path / "elsewhere" / "key", create_parent_dirs=True, interactive=True)
     assert result is True
-    assert "outside ~/.ssh" in capsys.readouterr().out
+    assert capsys.readouterr().out == "Warning: ~/elsewhere is outside ~/.ssh.\n"
 
 
 def test_confirm_create_parent_dirs_aborts_when_declined_outside_ssh(monkeypatch, tmp_path):
@@ -628,7 +837,7 @@ def test_confirm_create_parent_dirs_prompts_when_interactive_and_flag_is_off(mon
     result = confirm_create_parent_dirs(tmp_path / ".ssh" / "label" / "key", create_parent_dirs=False, interactive=True)
 
     assert result is True
-    assert "doesn't exist. Create it?" in seen["question"]
+    assert seen["question"] == "~/.ssh/label doesn't exist. Create it?"
     assert seen["default"] is True
 
 
@@ -653,7 +862,7 @@ def test_confirm_create_parent_dirs_warns_when_interactive_flag_off_and_outside_
     assert result is True
     assert seen["question"] == "Create it anyway?"
     assert seen["default"] is False
-    assert "outside ~/.ssh" in capsys.readouterr().out
+    assert capsys.readouterr().out == "Warning: ~/elsewhere is outside ~/.ssh.\n"
 
 
 @given(
@@ -702,8 +911,9 @@ def test_resolve_fields_defers_soft_violations_to_one_consolidated_confirm(monke
     resolved = resolve_fields(fields, values, defaults, interactive=True)
 
     assert resolved == {"a": 50, "b": 60}
-    assert len(confirm_calls) == 1
+    assert confirm_calls == ["Continue anyway?"]
     output = capsys.readouterr().out
+    assert output.splitlines()[0] == "These may take a long time:"
     assert "--a" in output
     assert "--b" in output
 
@@ -720,7 +930,7 @@ def test_resolve_fields_aborts_if_consolidated_confirm_declined(monkeypatch):
         resolve_fields(fields, values, defaults, interactive=True)
 
 
-def test_resolve_fields_hard_violations_still_reask_immediately_in_interactive_mode(monkeypatch):
+def test_resolve_fields_hard_violations_still_reask_immediately_in_interactive_mode(monkeypatch, capsys):
     fields = {"a": Field("A", kind="int", max_value=10)}
     values = {"a": None}
     defaults = {"a": 1}
@@ -730,6 +940,7 @@ def test_resolve_fields_hard_violations_still_reask_immediately_in_interactive_m
 
     resolved = resolve_fields(fields, values, defaults, interactive=True)
     assert resolved == {"a": 5}
+    assert capsys.readouterr().out == "Error: --a must be at most 10\n"
 
 
 def test_resolve_fields_never_confirms_in_non_interactive_mode(monkeypatch):
@@ -787,9 +998,16 @@ def test_hard_error_for_passes_none_through_without_checking_bounds():
 
 def test_ask_int_delegates_to_click_prompt_with_int_type(monkeypatch):
     captured = {}
-    monkeypatch.setattr(click, "prompt", lambda message, **kwargs: captured.update(kwargs) or 7)
+
+    def fake_prompt(message, **kwargs):
+        captured["message"] = message
+        captured.update(kwargs)
+        return 7
+
+    monkeypatch.setattr(click, "prompt", fake_prompt)
     field = Field("Count", kind="int")
     assert field.ask(default=3) == 7
+    assert captured["message"] == "Count"
     assert captured["type"] is int
     assert captured["default"] == 3
 
@@ -806,7 +1024,11 @@ def test_ask_path_shows_the_default_in_the_message_when_one_is_set(monkeypatch):
     field = Field("Output path", kind="path")
     assert field.ask(default=Path("/default/key")) == Path("/chosen")
     assert "/default/key" in captured["message"]
+    assert captured["default"] == Path("/default/key")
     assert captured["show_default"] is False
+    assert isinstance(captured["type"], click.Path)
+    assert captured["type"].dir_okay is False
+    assert captured["type"].type is Path
 
 
 def test_ask_path_warns_when_the_default_output_already_exists(monkeypatch, tmp_path, capsys):
@@ -817,7 +1039,7 @@ def test_ask_path_warns_when_the_default_output_already_exists(monkeypatch, tmp_
     field = Field("Output path", kind="path")
     field.ask(default=default)
 
-    assert "already exists" in capsys.readouterr().out
+    assert capsys.readouterr().out == f"Note: {default} already exists - enter a different path to avoid this.\n"
 
 
 def test_ask_path_warns_when_only_the_public_counterpart_exists(monkeypatch, tmp_path, capsys):
@@ -828,7 +1050,7 @@ def test_ask_path_warns_when_only_the_public_counterpart_exists(monkeypatch, tmp
     field = Field("Output path", kind="path")
     field.ask(default=default)
 
-    assert "already exists" in capsys.readouterr().out
+    assert capsys.readouterr().out == f"Note: {default} already exists - enter a different path to avoid this.\n"
 
 
 def test_ask_path_omits_the_bracketed_default_when_there_is_none(monkeypatch):
@@ -845,11 +1067,16 @@ def test_ask_path_omits_the_bracketed_default_when_there_is_none(monkeypatch):
 
 
 def test_ask_select_returns_the_chosen_answer(monkeypatch):
-    monkeypatch.setattr(
-        questionary, "select", lambda message, choices, default: type("Q", (), {"ask": lambda self: "b"})()
-    )
+    captured = {}
+
+    def fake_select(message, choices, default):
+        captured["message"] = message
+        return type("Q", (), {"ask": lambda self: "b"})()
+
+    monkeypatch.setattr(questionary, "select", fake_select)
     field = Field("Backend", kind="select", choices=("a", "b"))
     assert field.ask(default="a") == "b"
+    assert captured["message"] == "Backend"
 
 
 def test_ask_select_aborts_when_the_user_cancels(monkeypatch):
@@ -865,12 +1092,14 @@ def test_ask_falls_back_to_plain_prompt_for_text_kind(monkeypatch):
     captured = {}
 
     def fake_prompt(message, **kwargs):
+        captured["message"] = message
         captured.update(kwargs)
         return "typed"
 
     monkeypatch.setattr(click, "prompt", fake_prompt)
     field = Field("Label", kind="text")
     assert field.ask(default="fallback") == "typed"
+    assert captured["message"] == "Label"
     assert captured["default"] == "fallback"
     assert captured["show_default"] is True
 
@@ -897,9 +1126,41 @@ def test_write_keypair_and_recap_converts_value_error_to_usage_error(tmp_path):
 
 def test_write_keypair_and_recap_converts_os_error_to_click_exception(tmp_path):
     missing_dir_output = tmp_path / "nonexistent_dir" / "key"
-    with pytest.raises(click.ClickException, match="couldn't write"):
+    with pytest.raises(click.ClickException) as exc_info:
         write_keypair_and_recap(b"\x00" * 32, missing_dir_output, comment="", recap=(), key_passphrase="")
+    assert str(exc_info.value) == f"couldn't write {missing_dir_output}: No such file or directory"
     assert not missing_dir_output.exists()
+
+
+def test_write_keypair_and_recap_key_passphrase_defaults_to_empty(tmp_path, capsys):
+    from cryptography.hazmat.primitives import serialization
+
+    priv_path, _ = write_keypair_and_recap(b"\x08" * 32, tmp_path / "key", comment="", recap=())
+
+    assert "(encrypted)" not in capsys.readouterr().out
+    serialization.load_ssh_private_key(priv_path.read_bytes(), password=None)
+
+
+def test_write_keypair_and_recap_prints_the_exact_recap(tmp_path, capsys):
+    priv_path, pub_path = write_keypair_and_recap(
+        b"\x09" * 32, tmp_path / "key", comment="", recap=(("kdf", "argon2id"),), key_passphrase=""
+    )
+
+    assert capsys.readouterr().out == (
+        f"Wrote private key: {priv_path}\n"
+        f"Wrote public key:  {pub_path}\n"
+        "\n"
+        "To recreate this exact key, remember your passphrase (keep it secret) plus:\n"
+        f"  {'kdf':<18} argon2id\n"
+        f"  {'algorithm':<18} ed25519\n"
+    )
+
+
+def test_write_keypair_and_recap_marks_the_private_key_encrypted_when_passphrase_given(tmp_path, capsys):
+    priv_path, _ = write_keypair_and_recap(
+        b"\x0a" * 32, tmp_path / "key", comment="", recap=(), key_passphrase="hunter2"
+    )
+    assert capsys.readouterr().out.splitlines()[0] == f"Wrote private key: {priv_path} (encrypted)"
 
 
 def test_kdf_backend_base_run_is_not_implemented():
@@ -964,6 +1225,31 @@ def test_validate_algos_rejects_a_variable_algo_missing_its_size_bounds():
         validate_algos({"unbounded": Unbounded})
 
 
+def test_validate_algos_rejects_a_variable_algo_with_only_one_bound_set():
+    # min_digest_size and max_digest_size are both required once digest_size is unset -
+    # having only one of the two is exactly as broken as having neither.
+    class HalfBounded:
+        name = "half"
+        digest_size = None
+        min_digest_size = 1
+        max_digest_size = None
+
+    with pytest.raises(TypeError, match="must set digest_size"):
+        validate_algos({"half": HalfBounded})
+
+
+def test_all_salt_algos_preserve_the_original_error_message():
+    bad_label = "\ud800"  # an unpaired surrogate: .encode("utf-8") raises UnicodeEncodeError
+    with pytest.raises(ValueError) as exc_info:
+        bad_label.encode("utf-8")
+    expected = str(exc_info.value)
+
+    for algo in SALT_ALGOS.values():
+        with pytest.raises(SaltError) as exc_info:
+            algo.digest(bad_label, {"salt_digest_size": 16})
+        assert str(exc_info.value) == expected
+
+
 def test_format_options_is_a_no_op_when_the_command_has_no_options():
     cmd = KDFSaltCommand(name="detssh-test", params=[])
     ctx = click.Context(cmd, info_name="detssh-test", help_option_names=[])
@@ -972,6 +1258,27 @@ def test_format_options_is_a_no_op_when_the_command_has_no_options():
     cmd.format_options(ctx, formatter)
 
     assert formatter.getvalue() == ""
+
+
+def test_format_options_sizes_the_first_column_from_option_names_not_help_text():
+    # A short option name paired with a long help string: first_col must come from the
+    # *name* column (short, so text wraps wide) - using the help column instead (long,
+    # clamped to the 30-char cap) would wrap this description much narrower.
+    cmd = KDFSaltCommand(
+        name="detssh-test",
+        params=[click.Option(["--x"], help="word " * 20 + f"{DEFAULT_TEXT_MARKER}[default: 1]")],
+    )
+    ctx = click.Context(cmd, info_name="detssh-test", help_option_names=[])
+    formatter = click.HelpFormatter()
+
+    cmd.format_options(ctx, formatter)
+
+    # first_col = len("--x") = 3, so text_width = 78 - 3 - 4 = 71: "word " * 14 is 70
+    # chars, the 15th "word" fits (75 > 71 is false at 14, true at 15) - textwrap.wrap
+    # breaks after the 14th "word", producing a line noticeably longer than the ~44-char
+    # width a wrongly-sized (clamped to 30) first column would produce.
+    first_line = formatter.getvalue().splitlines()[1]
+    assert len(first_line.strip()) > 60
 
 
 def test_cli_wraps_a_salt_backend_error_as_a_clean_usage_error(monkeypatch, tmp_path):

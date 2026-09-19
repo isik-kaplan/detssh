@@ -1,3 +1,4 @@
+import stat
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,15 @@ def test_save_registry_creates_the_directory(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     save_registry({"work": Entry(key=Path("/key"), user="root", host="example.com")})
     assert registry_path().exists()
+
+
+def test_save_registry_creates_the_directory_with_private_permissions(monkeypatch, tmp_path):
+    # A deeply nested, not-yet-existing XDG_CONFIG_HOME, so save_registry's mkdir is the one
+    # that actually creates registry_dir() - if it already existed, the mode we're checking
+    # wouldn't have come from this call.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "nested" / "xdg"))
+    save_registry({"work": Entry(key=Path("/key"), user="root", host="example.com")})
+    assert stat.S_IMODE(registry_dir().stat().st_mode) == 0o700
 
 
 def test_load_registry_rejects_malformed_ini(monkeypatch, tmp_path):

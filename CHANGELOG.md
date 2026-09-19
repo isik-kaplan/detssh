@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-19
+
+### Added
+
+- Mutation testing via `mutmut`, gating CI: it rewrites the source one small
+  change at a time and reruns the suite, catching cases where 100% line
+  coverage still let a real behavior change through untested. Started at
+  300+ surviving mutants (from a from-scratch first run); closed all but
+  40, each confirmed genuinely equivalent - the mutated code is provably
+  indistinguishable from the original for every input (e.g. `"utf-8"` vs
+  `"UTF-8"` as a codec name, which Python's codec lookup can't tell apart)
+  - and documented one by one in `tests/mutmut_known_equivalents.txt`,
+  which CI diffs new runs against.
+- `ruff format --check` now runs in CI alongside `ruff check`.
+
+No application behavior changed in this release - every one of the ~260
+mutants closed was a test that was missing or checking too loosely (an
+exact-message assertion where only a substring was checked before, an edge
+case like a trailing `--kdf` flag with nothing after it, a permission check
+on a directory that already existed rather than one the call under test
+actually creates). The code they exercise was already correct.
+
 ## [0.5.0] - 2026-09-19
 
 ### Added

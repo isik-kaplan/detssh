@@ -1,0 +1,120 @@
+# Mutants mutmut generates that survive (or time out) for reasons that don't indicate
+# a real test gap - each is a change the *code* cannot behave differently for, or (for
+# the two "timeout" entries) a change that turns the line into an infinite loop, which
+# mutmut correctly reports as non-equivalent but under a status other than "survived".
+#
+# CI (.github/workflows/tests.yml, job "mutation") fails only on a survivor NOT listed
+# here, so this file is the thing to update - after re-verifying the reasoning below
+# still holds - if `uv run mutmut show <name>` shows something new isn't actually
+# equivalent. Never add an entry just to make CI pass without doing that check.
+#
+# Regenerate this exact set with:
+#   uv run mutmut run; uv run mutmut results | awk '{print $1}' | sed 's/:$//'
+# then diff against this file before committing - the diff is your changelog.
+
+# configparser's default optionxform lowercases option names on both write and read, so
+# looking a key up (or storing it) under a different case than the source reads it back
+# identically either way - "user"/"USER", "host"/"HOST", "port"/"PORT" are the same key.
+detssh.registry.x_load_registry__mutmut_12
+detssh.registry.x_load_registry__mutmut_14
+detssh.registry.x_load_registry__mutmut_19
+detssh.registry.x_save_registry__mutmut_4
+detssh.registry.x_save_registry__mutmut_7
+detssh.registry.x_save_registry__mutmut_9
+detssh.registry.x_save_registry__mutmut_12
+
+# _peek(args, "--kdf"/"--salt-algo", DEFAULT_*)'s default argument only ever feeds a
+# dict.get(key, fallback) elsewhere - a dict miss returns the same fallback class no
+# matter what the "default" string itself was, so DEFAULT_KDF and None are the same
+# value for every input. (Not to be confused with the *.get()* call's own fallback
+# argument, mutmut_21/23/26/28 in the same function - those ARE real and are tested via
+# test_invalid_kdf_value_gives_a_clean_error_not_a_traceback and its salt-algo sibling.)
+detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_4
+detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_13
+
+# click.Option's own default for the `default=` kwarg is already None for a non-flag
+# option, so passing default=None explicitly vs. omitting it are identical.
+detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_75
+detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_94
+
+# format_options' first_col/text_width arithmetic: the 30-char cap and 1-off changes to
+# it (mutmut_13) or to the -4/10 padding (21, 22) only produce a different wrapped line
+# for option-name/help-text/terminal-width combinations that land exactly on the changed
+# boundary - the real --help output (checked byte-for-byte by test_help_text.py) never
+# does, and test_format_options_sizes_the_first_column_from_option_names_not_help_text
+# already pins the one-character-off-by-a-lot case (measure_table()[0] vs [1]) that
+# *does* show up in real output.
+detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_13
+detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_21
+detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_22
+# help_text.split(DEFAULT_TEXT_MARKER, 1) vs rsplit(..., 1) vs split(..., 2) vs
+# split(..., ) (no limit): DEFAULT_TEXT_MARKER ("\x00") is inserted into a help string at
+# most once, by construction in build_options - with a single occurrence, every one of
+# these splits the string identically.
+detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_29
+detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_30
+detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_31
+# `textwrap.wrap(description, text_width) or [""]` - the `or [...]` fallback only fires
+# when wrap() returns an empty list, i.e. description is blank after stripping. No real
+# option's message is ever blank, so this branch is unreachable for the actual option
+# set; forcing it would mean asserting against a contrived, not-really-used input.
+detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_38
+
+# run()'s else-branch computes `argv = sys.argv[1:]` and passes `args=argv` unmodified -
+# click.BaseCommand.main() already defaults args=None to sys.argv[1:] itself, so passing
+# that exact value explicitly or omitting it (args=None) are the same call.
+detssh.cli.x_run__mutmut_14
+detssh.cli.x_run__mutmut_16
+
+# write_hosts_file's os.open(..., mode=HOSTS_FILE_MODE) is immediately followed by an
+# unconditional os.fchmod(fd, HOSTS_FILE_MODE) - whatever mode os.open used gets
+# overwritten right after, so dropping the os.open mode argument is a no-op. (ensure_include
+# has no such fchmod call, which is why its equivalent mutant - dropping SSH_CONFIG_FILE_MODE
+# from its own os.open - is NOT in this list: it's real, and is tested by
+# test_ensure_include_creates_a_missing_ssh_dir_with_correct_permissions.)
+detssh.ssh_config.x_write_hosts_file__mutmut_16
+# Same reasoning: write_keypair's os.open(..., PRIVATE_KEY_MODE) is followed by an
+# unconditional os.fchmod(fd, PRIVATE_KEY_MODE).
+detssh.keygen.x_write_keypair__mutmut_48
+
+# Python's codec lookup is case-insensitive ("utf-8" and "UTF-8" resolve to the same
+# codec), and hashlib's hash-algorithm-name lookup is too ("sha256" and "SHA256" give the
+# same digest) - every one of these mutates a hardcoded codec/hash name to a different
+# case, which cannot change what the code does.
+detssh.keygen.x_write_keypair__mutmut_29
+detssh.keygen.x_write_keypair__mutmut_71
+detssh.backends.kdf.scrypt.xǁScryptǁrun__mutmut_35
+detssh.backends.kdf.bcrypt_pbkdf.xǁBcryptPbkdfǁrun__mutmut_13
+detssh.backends.kdf.pbkdf2.xǁPbkdf2ǁrun__mutmut_12
+detssh.backends.kdf.pbkdf2.xǁPbkdf2ǁrun__mutmut_17
+detssh.backends.kdf._argon2.xǁArgon2Baseǁrun__mutmut_19
+detssh.backends.salt.sha512.xǁSha512ǁdigest__mutmut_4
+detssh.backends.salt.sha384.xǁSha384ǁdigest__mutmut_4
+detssh.backends.salt.sha256.xǁSha256ǁdigest__mutmut_4
+detssh.backends.salt.blake2s.xǁBlake2sǁdigest__mutmut_7
+detssh.backends.salt.sha3_512.xǁSha3512ǁdigest__mutmut_4
+detssh.backends.salt.blake2b.xǁBlake2bǁdigest__mutmut_7
+detssh.backends.salt.sha3_256.xǁSha3256ǁdigest__mutmut_4
+detssh.backends.salt.sha3_384.xǁSha3384ǁdigest__mutmut_4
+
+# Field.__init__'s default kind="text" is never explicitly checked anywhere (only
+# "secret"/"int"/"path"/"select" are); "text" is just a sentinel meaning "none of those",
+# so any other string in its place (kind="TEXT", kind="XXtextXX") behaves identically.
+detssh.backends.base.xǁFieldǁ__init____mutmut_1
+detssh.backends.base.xǁFieldǁ__init____mutmut_2
+
+# click.prompt(..., show_default=None) vs show_default=False: with default="" (falsy),
+# click treats both the same - neither shows a "[]" default hint. Confirmed empirically;
+# see the type= mutants on the same line (mutmut_34, 38), which ARE real and are killed
+# by test_wizard_register_prompt_reasks_on_a_non_integer_port.
+detssh.cli.x__register_interactively__mutmut_33
+
+# Two mutants turn a loop into an infinite one (an absolute assignment replacing a += in
+# _peek's index-advance; `name = None` inside `_register_interactively`'s `while not
+# name:` reprompt loop, which can never become truthy again). mutmut correctly reports
+# these as "timeout", not "survived" - CI's grep only matches lines ending in "survived",
+# so they don't need listing here, but are noted for anyone diffing this file against a
+# fresh `mutmut results`.
+# detssh.cli.x__peek__mutmut_14: timeout
+# detssh.cli.x__peek__mutmut_30: timeout
+# detssh.cli.x__register_interactively__mutmut_14: timeout

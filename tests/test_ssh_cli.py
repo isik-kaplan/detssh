@@ -1,8 +1,10 @@
+import click
+import pytest
 from click.testing import CliRunner
 
 from detssh.registry import load_registry
 from detssh.ssh_cli import OptionalPort, split_destination, ssh
-from detssh.ssh_config import ssh_config_path
+from detssh.ssh_config import hosts_file_path, ssh_config_path
 
 
 def _key(tmp_path, name="id_ed25519"):
@@ -21,6 +23,7 @@ def test_register_writes_the_registry_and_wires_up_ssh_config(monkeypatch, tmp_p
 
     assert result.exit_code == 0, result.output
     assert "Registered isik:personal:contabo -> root@contabo.com" in result.output
+    assert f"Added 'Include {hosts_file_path()}' to {ssh_config_path()}" in result.output
     entries = load_registry()
     assert entries["isik:personal:contabo"].user == "root"
     assert entries["isik:personal:contabo"].host == "contabo.com"
@@ -83,6 +86,7 @@ def test_register_on_an_existing_label_asks_to_overwrite_and_declines(monkeypatc
     result = runner.invoke(ssh, ["register", "label", "root@other.com", "--key", str(key_path)], input="n\n")
 
     assert result.exit_code != 0
+    assert "label is already registered (root@example.com). Overwrite?" in result.output
     assert load_registry()["label"].host == "example.com"
 
 
@@ -192,11 +196,49 @@ def test_optional_port_accepts_a_port_in_range():
     assert OptionalPort().convert("2222", None, None) == 2222
 
 
+def test_optional_port_accepts_both_range_boundaries():
+    assert OptionalPort().convert("1", None, None) == 1
+    assert OptionalPort().convert("65535", None, None) == 65535
+
+
+def test_optional_port_rejects_just_outside_both_range_boundaries():
+    for value in ("0", "65536"):
+        with pytest.raises(click.BadParameter):
+            OptionalPort().convert(value, None, None)
+
+
+class _FakeCtx:
+    """Stands in for click.Context: BadParameter.__init__ reads .command off it."""
+
+    command = None
+
+
+def test_optional_port_forwards_param_and_ctx_to_the_not_an_integer_failure():
+    param, ctx = object(), _FakeCtx()
+    with pytest.raises(click.BadParameter) as exc_info:
+        OptionalPort().convert("x", param, ctx)
+    assert exc_info.value.param is param
+    assert exc_info.value.ctx is ctx
+
+
+def test_optional_port_forwards_param_and_ctx_to_the_out_of_range_failure():
+    param, ctx = object(), _FakeCtx()
+    with pytest.raises(click.BadParameter) as exc_info:
+        OptionalPort().convert("70000", param, ctx)
+    assert exc_info.value.param is param
+    assert exc_info.value.ctx is ctx
+
+
 def test_split_destination_returns_none_for_anything_but_user_at_host():
     assert split_destination("root@example.com") == ("root", "example.com")
     assert split_destination("example.com") is None
     assert split_destination("@example.com") is None
     assert split_destination("root@") is None
+
+
+def test_split_destination_splits_on_the_first_at_sign():
+    # partition, not rpartition: only the first "@" is the user/host separator.
+    assert split_destination("a@b@c") == ("a", "b@c")
 
 
 def test_register_entry_stores_an_absolute_key_path(monkeypatch, tmp_path):

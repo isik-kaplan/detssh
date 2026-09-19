@@ -4,6 +4,13 @@
 seed/key output of every `--kdf` × `--salt-algo` combination at fixed
 inputs. `../test_golden_vectors.py` loads and checks them.
 
+`help_default.txt` and `help_pbkdf2_sha256.txt` are unrelated: exact
+`detssh --help` snapshots for two `--kdf`/`--salt-algo` combinations, checked
+by `../test_help_text.py`. Regenerate them (see that file's docstring) after
+any deliberate change to an option's `help=` text, `_help_note`, or
+`KDFSaltCommand.format_options`' wrapping - diff before committing, same as
+the vectors below.
+
 Not a correctness test (see `test_properties.py` / `test_determinism.py`) -
 it catches any change that silently makes the same inputs produce a
 *different* key.
