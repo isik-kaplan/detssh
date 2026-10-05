@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-05
+
+### Added
+
+- `--authorize`: derive the key, but only append its public half to
+  `~/.ssh/authorized_keys` (or `--authorized-keys FILE`), the way
+  `ssh-copy-id` would. No private key is written, so a machine you only want
+  to log *into* never holds one. A key that's already in the file (under any
+  comment or options) is left alone, and an existing file keeps its mode; a
+  new one is created 600 inside a 700 `~/.ssh`.
+- Interactive mode now opens by asking whether to generate a keypair or only
+  add the public key. Generating stays the default. `detssh --authorize`
+  skips that question and still prompts for everything else, so the seed
+  passphrase never has to go on the command line.
+
+### Changed
+
+- `--create-parent-dirs` applies to the `--authorized-keys` file's parent too.
+
 ## [0.6.0] - 2026-09-19
 
 ### Added

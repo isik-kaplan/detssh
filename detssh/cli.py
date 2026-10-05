@@ -1,5 +1,6 @@
 import sys
 import textwrap
+from pathlib import Path
 
 import click
 from click.formatting import measure_table
@@ -8,6 +9,8 @@ from detssh.backends import kdf, salt
 from detssh.backends.base import (
     DEFAULT_TEXT_MARKER,
     Field,
+    _display_path,
+    authorize_and_recap,
     build_options,
     confirm_create_parent_dirs,
     confirm_overwrite,
@@ -17,13 +20,24 @@ from detssh.backends.base import (
 )
 from detssh.backends.kdf.base import KDFError
 from detssh.backends.salt.base import SaltError
-from detssh.keygen import COMMENT_FORBIDDEN_CHARS, ED25519_SEED_LENGTH, default_output_path
+from detssh.keygen import (
+    COMMENT_FORBIDDEN_CHARS,
+    ED25519_SEED_LENGTH,
+    default_authorized_keys_path,
+    default_output_path,
+)
 from detssh.ssh_cli import OptionalPort, register_entry, split_destination
 
 
 DEFAULT_KDF = "argon2id"
 DEFAULT_SALT_ALGO = "blake2b"
 HASH_LEN = ED25519_SEED_LENGTH
+
+GENERATE_MODE = "Generate a keypair (private + public key)"
+AUTHORIZE_MODE = "Only add the public key to an authorized_keys file"
+MODE = Field("What do you want to do?", kind="select", choices=(GENERATE_MODE, AUTHORIZE_MODE))
+# Flags that only make sense when a private key gets written.
+KEYPAIR_ONLY_FLAGS = ("output", "key_passphrase", "register", "register_port")
 
 SELECTORS = {
     "kdf": Field("KDF backend", kind="select", choices=tuple(kdf.BACKENDS)),
@@ -65,8 +79,8 @@ def _peek(args, flag, default):
     return value
 
 
-def _fields_for(kdf_cls, salt_cls):
-    return {
+def _fields_for(kdf_cls, salt_cls, authorize=False):
+    fields = {
         "seed": COMMON["seed"],
         "label": COMMON["label"],
         **kdf_cls.fields,
@@ -75,6 +89,9 @@ def _fields_for(kdf_cls, salt_cls):
         "comment": COMMON["comment"],
         "key_passphrase": COMMON["key_passphrase"],
     }
+    if authorize:
+        del fields["output"], fields["key_passphrase"]
+    return fields
 
 
 def _help_note(kdf_cls, salt_cls):
@@ -110,6 +127,30 @@ def _registration_from_flags(label, values):
     return label, user, host, port
 
 
+def _check_authorize_flags(authorize, authorized_keys, overwrite_files, values):
+    """Reject flag combinations --authorize can't honor, before any key derivation."""
+    if not authorize:
+        if authorized_keys is not None:
+            raise click.UsageError("--authorized-keys needs --authorize")
+        return
+    if overwrite_files:
+        raise click.UsageError("--overwrite-files can't be used with --authorize: it only appends")
+    for name in KEYPAIR_ONLY_FLAGS:
+        if values.get(name) is not None:
+            flag = f"--{name.replace('_', '-')}"
+            raise click.UsageError(f"{flag} can't be used with --authorize: no private key is written")
+
+
+def _ask_authorized_keys():
+    default = default_authorized_keys_path()
+    return click.prompt(
+        f"authorized_keys file to add the public key to [{_display_path(default)}]",
+        default=default,
+        type=click.Path(dir_okay=False, path_type=Path),
+        show_default=False,
+    )
+
+
 def _register_interactively(label, key_path):
     """Offer to wire the key we just wrote into ~/.ssh/config. Declining leaves the key
     exactly as written - `detssh ssh register` does the same thing later on."""
@@ -143,12 +184,26 @@ class KDFSaltCommand(click.Command):
         fields = {**SELECTORS, **_fields_for(kdf_cls, salt_cls)}
         defaults = {**DEFAULTS, **kdf_cls.defaults, **salt_cls.defaults}
         self.params = build_options(fields, defaults) + [
+            click.Option(
+                ["--authorize"],
+                is_flag=True,
+                help="Only add the public key to an authorized_keys file (see --authorized-keys), so the "
+                "machine accepts logins from wherever you derived the private key. Writes no private key. "
+                "Doesn't switch to flag mode on its own: `detssh --authorize` still prompts for the rest.",
+            ),
+            click.Option(
+                ["--authorized-keys"],
+                type=click.Path(dir_okay=False, path_type=Path),
+                default=None,
+                help="authorized_keys file for --authorize to append to. Skipped if the key is already "
+                f"in it.{DEFAULT_TEXT_MARKER}[default: ~/.ssh/authorized_keys]",
+            ),
             click.Option(["--overwrite-files"], is_flag=True, help="Overwrite existing output files without asking."),
             click.Option(
                 ["--create-parent-dirs"],
                 is_flag=True,
-                help="Create the output path's parent directories if missing, even outside ~/.ssh. "
-                "Interactive mode prompts for this itself if you don't pass the flag; "
+                help="Create the output path's (or --authorized-keys file's) parent directories if missing, "
+                "even outside ~/.ssh. Interactive mode prompts for this itself if you don't pass the flag; "
                 "non-interactive mode requires it explicitly.",
             ),
             click.Option(
@@ -199,9 +254,13 @@ class KDFSaltCommand(click.Command):
 
 
 @click.command(cls=KDFSaltCommand, context_settings={"help_option_names": ["-h", "--help"], "max_content_width": 120})
-def main(overwrite_files, create_parent_dirs, **values):
+def main(overwrite_files, create_parent_dirs, authorize, authorized_keys, **values):
     interactive = is_interactive(values)
     force_allow_soft_constraints = bool(values.get("force_allow_soft_constraints"))
+
+    _check_authorize_flags(authorize, authorized_keys, overwrite_files, values)
+    if interactive and not authorize:
+        authorize = MODE.ask(GENERATE_MODE) == AUTHORIZE_MODE
 
     kdf_name = values["kdf"]
     if kdf_name is None:
@@ -213,7 +272,7 @@ def main(overwrite_files, create_parent_dirs, **values):
         salt_name = SELECTORS["salt_algo"].ask(DEFAULTS["salt_algo"]) if interactive else DEFAULTS["salt_algo"]
     salt_cls = salt.ALGOS[salt_name]
 
-    fields = _fields_for(kdf_cls, salt_cls)
+    fields = _fields_for(kdf_cls, salt_cls, authorize)
     defaults = {**DEFAULTS, **kdf_cls.defaults, **salt_cls.defaults}
 
     resolved = {
@@ -226,6 +285,13 @@ def main(overwrite_files, create_parent_dirs, **values):
     if any(char in resolved["comment"] for char in COMMENT_FORBIDDEN_CHARS):
         raise click.UsageError("--comment must not contain newlines")
 
+    if authorize:
+        if authorized_keys is None:
+            authorized_keys = _ask_authorized_keys() if interactive else default_authorized_keys_path()
+        target = authorized_keys.expanduser()
+    else:
+        target = resolved["output"]
+
     registration = None if interactive else _registration_from_flags(resolved["label"], values)
 
     try:
@@ -236,8 +302,9 @@ def main(overwrite_files, create_parent_dirs, **values):
     if salt_error:
         raise click.UsageError(f"{kdf_name} {salt_error}")
 
-    confirm_overwrite(resolved["output"], overwrite_files)
-    create_parent_dirs = confirm_create_parent_dirs(resolved["output"], create_parent_dirs, interactive)
+    if not authorize:
+        confirm_overwrite(target, overwrite_files)
+    create_parent_dirs = confirm_create_parent_dirs(target, create_parent_dirs, interactive)
 
     click.echo("Deriving key...")
     try:
@@ -254,6 +321,10 @@ def main(overwrite_files, create_parent_dirs, **values):
         *kdf_cls.recap(resolved),
         ("hash-len", resolved["hash_len"]),
     )
+
+    if authorize:
+        authorize_and_recap(seed_bytes, target, resolved["comment"], recap, create_parent_dirs=create_parent_dirs)
+        return
 
     priv_path, _ = write_keypair_and_recap(
         seed_bytes,

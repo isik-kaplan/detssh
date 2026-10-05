@@ -3,7 +3,14 @@ from pathlib import Path
 import click
 import questionary
 
-from detssh.keygen import keypair_from_seed, public_key_path, ssh_dir, write_keypair
+from detssh.keygen import (
+    authorize_public_key,
+    keypair_from_seed,
+    public_key_line,
+    public_key_path,
+    ssh_dir,
+    write_keypair,
+)
 
 
 def _display_path(path):
@@ -215,9 +222,31 @@ def write_keypair_and_recap(seed_bytes, output, comment, recap, key_passphrase="
     click.echo(f"Wrote private key: {priv_path}{' (encrypted)' if key_passphrase else ''}")
     click.echo(f"Wrote public key:  {pub_path}")
 
+    echo_recap(recap)
+
+    return priv_path, pub_path
+
+
+def authorize_and_recap(seed_bytes, authorized_keys, comment, recap, create_parent_dirs=False):
+    _, public_key = keypair_from_seed(seed_bytes)
+    try:
+        added = authorize_public_key(
+            public_key, authorized_keys, comment=comment, create_parent_dirs=create_parent_dirs
+        )
+    except OSError as e:
+        raise click.ClickException(f"couldn't write {authorized_keys}: {e.strerror or e}") from e
+
+    if added:
+        click.echo(f"Added public key to {authorized_keys}:")
+    else:
+        click.echo(f"Public key already in {authorized_keys}, left it unchanged:")
+    click.echo(f"  {public_key_line(public_key, comment).decode('utf-8').rstrip()}")
+
+    echo_recap(recap)
+
+
+def echo_recap(recap):
     click.echo()
     click.echo("To recreate this exact key, remember your passphrase (keep it secret) plus:")
     for name, value in (*recap, ("algorithm", "ed25519")):
         click.echo(f"  {name:<18} {value}")
-
-    return priv_path, pub_path

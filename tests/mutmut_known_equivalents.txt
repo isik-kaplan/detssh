@@ -34,18 +34,16 @@ detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_13
 
 # click.Option's own default for the `default=` kwarg is already None for a non-flag
 # option, so passing default=None explicitly vs. omitting it are identical.
-detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_75
-detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_94
+detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_64
+detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_110
+detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_129
 
-# format_options' first_col/text_width arithmetic: the 30-char cap and 1-off changes to
-# it (mutmut_13) or to the -4/10 padding (21, 22) only produce a different wrapped line
-# for option-name/help-text/terminal-width combinations that land exactly on the changed
-# boundary - the real --help output (checked byte-for-byte by test_help_text.py) never
-# does, and test_format_options_sizes_the_first_column_from_option_names_not_help_text
+# format_options' text_width floor: a 1-off change to the 10 (mutmut_22) only produces a
+# different wrapped line on a terminal narrow enough to hit the floor at all, landing
+# exactly on the changed boundary - the real --help output (checked byte-for-byte by
+# test_help_text.py) never does, and test_format_options_sizes_the_first_column_from_option_names_not_help_text
 # already pins the one-character-off-by-a-lot case (measure_table()[0] vs [1]) that
 # *does* show up in real output.
-detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_13
-detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_21
 detssh.cli.xǁKDFSaltCommandǁformat_options__mutmut_22
 # help_text.split(DEFAULT_TEXT_MARKER, 1) vs rsplit(..., 1) vs split(..., 2) vs
 # split(..., ) (no limit): DEFAULT_TEXT_MARKER ("\x00") is inserted into a help string at
@@ -75,14 +73,15 @@ detssh.cli.x_run__mutmut_16
 detssh.ssh_config.x_write_hosts_file__mutmut_16
 # Same reasoning: write_keypair's os.open(..., PRIVATE_KEY_MODE) is followed by an
 # unconditional os.fchmod(fd, PRIVATE_KEY_MODE).
-detssh.keygen.x_write_keypair__mutmut_48
+detssh.keygen.x_write_keypair__mutmut_43
 
 # Python's codec lookup is case-insensitive ("utf-8" and "UTF-8" resolve to the same
 # codec), and hashlib's hash-algorithm-name lookup is too ("sha256" and "SHA256" give the
 # same digest) - every one of these mutates a hardcoded codec/hash name to a different
 # case, which cannot change what the code does.
 detssh.keygen.x_write_keypair__mutmut_29
-detssh.keygen.x_write_keypair__mutmut_71
+detssh.keygen.x_public_key_line__mutmut_20
+detssh.backends.base.x_authorize_and_recap__mutmut_25
 detssh.backends.kdf.scrypt.xǁScryptǁrun__mutmut_35
 detssh.backends.kdf.bcrypt_pbkdf.xǁBcryptPbkdfǁrun__mutmut_13
 detssh.backends.kdf.pbkdf2.xǁPbkdf2ǁrun__mutmut_12
@@ -108,6 +107,17 @@ detssh.backends.base.xǁFieldǁ__init____mutmut_2
 # see the type= mutants on the same line (mutmut_34, 38), which ARE real and are killed
 # by test_wizard_register_prompt_reasks_on_a_non_integer_port.
 detssh.cli.x__register_interactively__mutmut_33
+# Same for _ask_authorized_keys, whose default is a Path (truthy): click only shows the
+# hint when show_default is truthy or a str, and None is neither, so it behaves exactly
+# like False. The hint the prompt does show is written into its message by hand.
+detssh.cli.x__ask_authorized_keys__mutmut_5
+
+# click.Path only ever reads dir_okay through truthiness (`if not self.dir_okay and ...`),
+# so dir_okay=None behaves exactly like dir_okay=False. The dir_okay=True and omitted
+# mutants on the same lines are real and killed by the "rejects_a_directory" tests in
+# test_authorize.py.
+detssh.cli.x__ask_authorized_keys__mutmut_11
+detssh.cli.xǁKDFSaltCommandǁparse_args__mutmut_68
 
 # Two mutants turn a loop into an infinite one (an absolute assignment replacing a += in
 # _peek's index-advance; `name = None` inside `_register_interactively`'s `while not

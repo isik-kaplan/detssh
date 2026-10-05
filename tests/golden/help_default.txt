@@ -23,13 +23,22 @@ Options:
   --comment TEXT                  Comment for the public key
   --key-passphrase TEXT           Passphrase to encrypt the private key file
                                   with (leave empty for none)
+  --authorize                     Only add the public key to an authorized_keys
+                                  file (see --authorized-keys), so the machine
+                                  accepts logins from wherever you derived the
+                                  private key. Writes no private key. Doesn't
+                                  switch to flag mode on its own: `detssh
+                                  --authorize` still prompts for the rest.
+  --authorized-keys FILE          authorized_keys file for --authorize to append
+                                  to. Skipped if the key is already in it.
+                                  [default: ~/.ssh/authorized_keys]
   --overwrite-files               Overwrite existing output files without
                                   asking.
-  --create-parent-dirs            Create the output path's parent directories if
-                                  missing, even outside ~/.ssh. Interactive mode
-                                  prompts for this itself if you don't pass the
-                                  flag; non-interactive mode requires it
-                                  explicitly.
+  --create-parent-dirs            Create the output path's (or --authorized-keys
+                                  file's) parent directories if missing, even
+                                  outside ~/.ssh. Interactive mode prompts for
+                                  this itself if you don't pass the flag; non-
+                                  interactive mode requires it explicitly.
   --register USER@HOST            Register the generated key so plain `ssh
                                   <label>` connects to USER@HOST, as `detssh ssh
                                   register` would. Needs --label, which names
