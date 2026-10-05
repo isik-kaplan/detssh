@@ -11,6 +11,13 @@ any deliberate change to an option's `help=` text, `_help_note`, or
 `KDFSaltCommand.format_options`' wrapping - diff before committing, same as
 the vectors below.
 
+`defaults.json` pins every default that feeds derivation: the default
+`--kdf`/`--salt-algo`, the hash length, and each backend's default options.
+The vectors run at tiny fixed costs to stay fast, so they never exercise the
+real defaults; `../test_golden_defaults.py` covers that gap (regeneration
+command in its docstring). A failure there means the same as a failing
+vector, below.
+
 Not a correctness test (see `test_properties.py` / `test_determinism.py`) -
 it catches any change that silently makes the same inputs produce a
 *different* key.

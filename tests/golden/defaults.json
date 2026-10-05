@@ -1,0 +1,47 @@
+{
+  "hash_len": 32,
+  "kdf": "argon2id",
+  "kdf_defaults": {
+    "argon2d": {
+      "iterations": 10,
+      "memory": 1024,
+      "parallelism": 4
+    },
+    "argon2i": {
+      "iterations": 10,
+      "memory": 1024,
+      "parallelism": 4
+    },
+    "argon2id": {
+      "iterations": 10,
+      "memory": 1024,
+      "parallelism": 4
+    },
+    "bcrypt_pbkdf": {
+      "rounds": 16
+    },
+    "pbkdf2": {
+      "iterations": 600000
+    },
+    "scrypt": {
+      "block_size": 8,
+      "cost": 16384,
+      "parallelism": 1
+    }
+  },
+  "salt_algo": "blake2b",
+  "salt_defaults": {
+    "blake2b": {
+      "salt_digest_size": 16
+    },
+    "blake2s": {
+      "salt_digest_size": 16
+    },
+    "sha256": {},
+    "sha384": {},
+    "sha3_256": {},
+    "sha3_384": {},
+    "sha3_512": {},
+    "sha512": {}
+  }
+}
