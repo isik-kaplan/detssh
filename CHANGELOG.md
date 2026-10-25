@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-25
+
+### Changed
+
+- Options, questions and their checks now come from one declaration per
+  setting, built on `isik[cli]` (a new dependency). `--help`, every flag,
+  every question and every derived key are unchanged.
+- In interactive mode, `--overwrite-files` with "Only add the public key" is
+  now refused, as it already was with `--authorize`. Before, it was quietly
+  ignored.
+
 ## [0.7.0] - 2026-10-05
 
 ### Added

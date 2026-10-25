@@ -1,23 +1,20 @@
 import hashlib
 
-from detssh.backends.base import Field
+from isik.common.settings import Setting, Settings
+
 from detssh.backends.kdf.base import NO_SALT_CONSTRAINTS, KDFBackend, KDFError
+
+
+class ScryptSettings(Settings):
+    cost = Setting(int, "scrypt cost (N, power of two)", default=2**14, soft_max=2**18)
+    block_size = Setting(int, "scrypt block size (r)", default=8, soft_max=16)
+    parallelism = Setting(int, "scrypt parallelism (p)", default=1, soft_max=8)
 
 
 class Scrypt(KDFBackend):
     name = "scrypt"
     salt_constraints = NO_SALT_CONSTRAINTS
-
-    fields = {
-        "cost": Field("scrypt cost (N, power of two)", kind="int", soft_max=2**18),
-        "block_size": Field("scrypt block size (r)", kind="int", soft_max=16),
-        "parallelism": Field("scrypt parallelism (p)", kind="int", soft_max=8),
-    }
-    defaults = {
-        "cost": 2**14,
-        "block_size": 8,
-        "parallelism": 1,
-    }
+    settings = ScryptSettings
 
     @classmethod
     def run(cls, resolved, salt):

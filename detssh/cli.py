@@ -1,21 +1,27 @@
 import sys
-import textwrap
 from pathlib import Path
 
 import click
-from click.formatting import measure_table
+from isik.cli import HelpFormat, is_interactive, no_option_given, options
+from isik.common.settings import (
+    AskedAtUse,
+    Constant,
+    NoEnv,
+    NoQuestion,
+    OnlyWhen,
+    ReplacedByFlow,
+    Requires,
+    Selector,
+    Setting,
+    Settings,
+)
 
 from detssh.backends import kdf, salt
 from detssh.backends.base import (
-    DEFAULT_TEXT_MARKER,
-    Field,
-    _display_path,
     authorize_and_recap,
-    build_options,
     confirm_create_parent_dirs,
     confirm_overwrite,
-    is_interactive,
-    resolve_fields,
+    note_if_exists,
     write_keypair_and_recap,
 )
 from detssh.backends.kdf.base import KDFError
@@ -35,63 +41,18 @@ HASH_LEN = ED25519_SEED_LENGTH
 
 GENERATE_MODE = "Generate a keypair (private + public key)"
 AUTHORIZE_MODE = "Only add the public key to an authorized_keys file"
-MODE = Field("What do you want to do?", kind="select", choices=(GENERATE_MODE, AUTHORIZE_MODE))
-# Flags that only make sense when a private key gets written.
-KEYPAIR_ONLY_FLAGS = ("output", "key_passphrase", "register", "register_port")
 
-SELECTORS = {
-    "kdf": Field("KDF backend", kind="select", choices=tuple(kdf.BACKENDS)),
-    "salt_algo": Field("Salt hash algorithm", kind="select", choices=tuple(salt.ALGOS)),
-}
-COMMON = {
-    "seed": Field("Seed passphrase", kind="secret", required=True),
-    "label": Field("Label"),
-    "output": Field("Output path for the private key (ssh-keygen style, e.g. ~/.ssh/id_ed25519)", kind="path"),
-    "comment": Field("Comment for the public key"),
-    "key_passphrase": Field("Passphrase to encrypt the private key file with (leave empty for none)", kind="secret"),
-}
-DEFAULTS = {
-    "kdf": DEFAULT_KDF,
-    "salt_algo": DEFAULT_SALT_ALGO,
-    "label": "",
-    "output": default_output_path,
-    "comment": "",
-    "key_passphrase": "",
-}
+# A file path, never a directory: an existing directory is refused when given or answered.
+FILE = click.Path(dir_okay=False, path_type=Path)
+NOT_WITH_AUTHORIZE = "%(name)s can't be used with --authorize: no private key is written"
 
 
-def _peek(args, flag, default):
-    """Guess a flag's value before click does the real parsing, so we know which
-    backend's options to register. Skips past a consumed value instead of scanning
-    it as a token in its own right, so a value that happens to equal the flag itself
-    (e.g. `--kdf --kdf`) isn't misread as a second occurrence of the flag."""
-    value = default
-    i = 0
-    while i < len(args):
-        arg = args[i]
-        if arg == flag and i + 1 < len(args):
-            value = args[i + 1]
-            i += 2
-            continue
-        if arg.startswith(flag + "="):
-            value = arg.split("=", 1)[1]
-        i += 1
-    return value
+def _writes_a_keypair(values):
+    return not values.authorize
 
 
-def _fields_for(kdf_cls, salt_cls, authorize=False):
-    fields = {
-        "seed": COMMON["seed"],
-        "label": COMMON["label"],
-        **kdf_cls.fields,
-        **salt_cls.fields,
-        "output": COMMON["output"],
-        "comment": COMMON["comment"],
-        "key_passphrase": COMMON["key_passphrase"],
-    }
-    if authorize:
-        del fields["output"], fields["key_passphrase"]
-    return fields
+def _authorizes(values):
+    return values.authorize
 
 
 def _help_note(kdf_cls, salt_cls):
@@ -107,47 +68,6 @@ def _help_note(kdf_cls, salt_cls):
         "\b\n"
         "To use a generated key with plain `ssh <label>`, see:\n"
         "  detssh ssh --help"
-    )
-
-
-def _registration_from_flags(label, values):
-    """Validate --register/--register-port up front, so a typo surfaces now rather than
-    after a minute of key derivation. Returns None when --register wasn't passed."""
-    destination, port = values.get("register"), values.get("register_port")
-    if destination is None:
-        if port is not None:
-            raise click.UsageError("--register-port needs --register")
-        return None
-    if not label:
-        raise click.UsageError("--register needs --label: the label names the `Host` block in ~/.ssh/config")
-    parsed = split_destination(destination)
-    if parsed is None:
-        raise click.UsageError("--register must be USER@HOST")
-    user, host = parsed
-    return label, user, host, port
-
-
-def _check_authorize_flags(authorize, authorized_keys, overwrite_files, values):
-    """Reject flag combinations --authorize can't honor, before any key derivation."""
-    if not authorize:
-        if authorized_keys is not None:
-            raise click.UsageError("--authorized-keys needs --authorize")
-        return
-    if overwrite_files:
-        raise click.UsageError("--overwrite-files can't be used with --authorize: it only appends")
-    for name in KEYPAIR_ONLY_FLAGS:
-        if values.get(name) is not None:
-            flag = f"--{name.replace('_', '-')}"
-            raise click.UsageError(f"{flag} can't be used with --authorize: no private key is written")
-
-
-def _ask_authorized_keys():
-    default = default_authorized_keys_path()
-    return click.prompt(
-        f"authorized_keys file to add the public key to [{_display_path(default)}]",
-        default=default,
-        type=click.Path(dir_okay=False, path_type=Path),
-        show_default=False,
     )
 
 
@@ -173,174 +93,180 @@ def _register_interactively(label, key_path):
     register_entry(name, user, host, key=key_path, port=port)
 
 
-class KDFSaltCommand(click.Command):
-    def parse_args(self, ctx, args):
-        kdf_name = _peek(args, "--kdf", DEFAULT_KDF)
-        salt_name = _peek(args, "--salt-algo", DEFAULT_SALT_ALGO)
+class Generate(
+    Settings,
+    prefix="DETSSH_",
+    env=NoEnv(reason="a stray environment variable would silently derive a different key"),
+    ask_order=["authorize"],
+    soft_override="force_allow_soft_constraints",
+):
+    kdf = Selector(
+        "KDF backend",
+        {name: backend.settings for name, backend in kdf.BACKENDS.items()},
+        default=DEFAULT_KDF,
+    )
+    salt_algo = Selector(
+        "Salt hash algorithm",
+        {name: algo.settings for name, algo in salt.ALGOS.items()},
+        default=DEFAULT_SALT_ALGO,
+    )
+    seed = Setting(str, "Seed passphrase", secret=True, confirm=True, required=True)
+    label = Setting(str, "Label", default="")
+    kdf_settings = kdf.settings
+    salt_settings = salt_algo.settings
+    output = Setting(
+        FILE,
+        "Output path for the private key (ssh-keygen style, e.g. ~/.ssh/id_ed25519)",
+        default=default_output_path,
+        before_ask=note_if_exists,
+        only_when=OnlyWhen(_writes_a_keypair, message=NOT_WITH_AUTHORIZE),
+    )
+    comment = Setting(str, "Comment for the public key", default="")
+    key_passphrase = Setting(
+        str,
+        "Passphrase to encrypt the private key file with (leave empty for none)",
+        secret=True,
+        confirm=True,
+        default="",
+        only_when=OnlyWhen(_writes_a_keypair, message=NOT_WITH_AUTHORIZE),
+    )
+    authorize = Setting(
+        bool,
+        "Only add the public key to an authorized_keys file (see --authorized-keys), so the "
+        "machine accepts logins from wherever you derived the private key. Writes no private key. "
+        "Doesn't switch to flag mode on its own: `detssh --authorize` still prompts for the rest.",
+        default=False,
+        negatable=False,
+        question="What do you want to do?",
+        choices={GENERATE_MODE: False, AUTHORIZE_MODE: True},
+    )
+    authorized_keys = Setting(
+        FILE,
+        "authorized_keys file for --authorize to append to. Skipped if the key is already in it.",
+        default=default_authorized_keys_path,
+        question="authorized_keys file to add the public key to",
+        only_when=OnlyWhen(_authorizes, message="%(name)s needs --authorize"),
+    )
+    overwrite_files = Setting(
+        bool,
+        "Overwrite existing output files without asking.",
+        default=False,
+        negatable=False,
+        question=AskedAtUse(reason="confirmed when the key is written, and only if the output file already exists"),
+        only_when=OnlyWhen(_writes_a_keypair, message="%(name)s can't be used with --authorize: it only appends"),
+    )
+    create_parent_dirs = Setting(
+        bool,
+        "Create the output path's (or --authorized-keys file's) parent directories if missing, "
+        "even outside ~/.ssh. Interactive mode prompts for this itself if you don't pass the flag; "
+        "non-interactive mode requires it explicitly.",
+        default=False,
+        negatable=False,
+        question=AskedAtUse(reason="confirmed when the key is written, and only if the parent directory is missing"),
+    )
+    register = Setting(
+        str,
+        "Register the generated key so plain `ssh <label>` connects to USER@HOST, as "
+        "`detssh ssh register` would. Needs --label, which names the `Host` block. Interactive "
+        "mode asks about this at the end instead.",
+        default=None,
+        metavar="USER@HOST",
+        question=ReplacedByFlow(
+            flow=_register_interactively, reason="asked once the key is written, with its own confirm and re-asks"
+        ),
+        requires=Requires(
+            "label", message="%(name)s needs %(other)s: the label names the `Host` block in ~/.ssh/config"
+        ),
+        only_when=OnlyWhen(_writes_a_keypair, message=NOT_WITH_AUTHORIZE),
+    )
+    register_port = Setting(
+        OptionalPort(),
+        "Non-default ssh port to register with --register.",
+        default=None,
+        question=ReplacedByFlow(
+            flow=_register_interactively, reason="asked once the key is written, as part of registering it"
+        ),
+        requires="register",
+        only_when=OnlyWhen(_writes_a_keypair, message=NOT_WITH_AUTHORIZE),
+    )
+    force_allow_soft_constraints = Setting(
+        bool,
+        "Flag mode only: skip the 'this may take a long time' confirmation for oversized cost "
+        "knobs. Interactive mode always asks.",
+        default=False,
+        negatable=False,
+        question=NoQuestion(reason="interactive mode always confirms oversized cost knobs itself, once"),
+    )
+    hash_len = Constant(HASH_LEN, reason="an Ed25519 private key is its 32-byte seed, so the KDF always makes 32")
 
-        kdf_cls = kdf.BACKENDS.get(kdf_name, kdf.BACKENDS[DEFAULT_KDF])
-        salt_cls = salt.ALGOS.get(salt_name, salt.ALGOS[DEFAULT_SALT_ALGO])
-
-        fields = {**SELECTORS, **_fields_for(kdf_cls, salt_cls)}
-        defaults = {**DEFAULTS, **kdf_cls.defaults, **salt_cls.defaults}
-        self.params = build_options(fields, defaults) + [
-            click.Option(
-                ["--authorize"],
-                is_flag=True,
-                help="Only add the public key to an authorized_keys file (see --authorized-keys), so the "
-                "machine accepts logins from wherever you derived the private key. Writes no private key. "
-                "Doesn't switch to flag mode on its own: `detssh --authorize` still prompts for the rest.",
-            ),
-            click.Option(
-                ["--authorized-keys"],
-                type=click.Path(dir_okay=False, path_type=Path),
-                default=None,
-                help="authorized_keys file for --authorize to append to. Skipped if the key is already "
-                f"in it.{DEFAULT_TEXT_MARKER}[default: ~/.ssh/authorized_keys]",
-            ),
-            click.Option(["--overwrite-files"], is_flag=True, help="Overwrite existing output files without asking."),
-            click.Option(
-                ["--create-parent-dirs"],
-                is_flag=True,
-                help="Create the output path's (or --authorized-keys file's) parent directories if missing, "
-                "even outside ~/.ssh. Interactive mode prompts for this itself if you don't pass the flag; "
-                "non-interactive mode requires it explicitly.",
-            ),
-            click.Option(
-                ["--register"],
-                metavar="USER@HOST",
-                default=None,
-                help="Register the generated key so plain `ssh <label>` connects to USER@HOST, as "
-                "`detssh ssh register` would. Needs --label, which names the `Host` block. Interactive "
-                "mode asks about this at the end instead.",
-            ),
-            click.Option(
-                ["--register-port"],
-                type=OptionalPort(),
-                default=None,
-                help="Non-default ssh port to register with --register.",
-            ),
-            click.Option(
-                ["--force-allow-soft-constraints"],
-                is_flag=True,
-                default=None,
-                help="Flag mode only: skip the 'this may take a long time' confirmation for oversized cost "
-                "knobs. Interactive mode always asks.",
-            ),
-        ]
-        self.epilog = _help_note(kdf_cls, salt_cls)
-
-        return super().parse_args(ctx, args)
-
-    def format_options(self, ctx, formatter):
-        opts = [record for param in self.get_params(ctx) if (record := param.get_help_record(ctx)) is not None]
-        if not opts:
-            return
-
-        first_col = min(measure_table(opts)[0], 30)
-        text_width = max(formatter.width - first_col - 4, 10)
-
-        rewrapped = []
-        for name, help_text in opts:
-            if DEFAULT_TEXT_MARKER in help_text:
-                description, default_line = help_text.split(DEFAULT_TEXT_MARKER, 1)
-                lines = textwrap.wrap(description, text_width) or [""]
-                lines.append(default_line)
-                help_text = "\b\n" + "\n".join(lines)
-            rewrapped.append((name, help_text))
-
-        with formatter.section("Options"):
-            formatter.write_dl(rewrapped)
+    def check(self):
+        if any(char in self.comment for char in COMMENT_FORBIDDEN_CHARS):
+            raise self.error("comment", "must not contain newlines")
+        if self.register is not None and split_destination(self.register) is None:
+            raise self.error("register", "must be USER@HOST")
 
 
-@click.command(cls=KDFSaltCommand, context_settings={"help_option_names": ["-h", "--help"], "max_content_width": 120})
-def main(overwrite_files, create_parent_dirs, authorize, authorized_keys, **values):
-    interactive = is_interactive(values)
-    force_allow_soft_constraints = bool(values.get("force_allow_soft_constraints"))
-
-    _check_authorize_flags(authorize, authorized_keys, overwrite_files, values)
-    if interactive and not authorize:
-        authorize = MODE.ask(GENERATE_MODE) == AUTHORIZE_MODE
-
-    kdf_name = values["kdf"]
-    if kdf_name is None:
-        kdf_name = SELECTORS["kdf"].ask(DEFAULTS["kdf"]) if interactive else DEFAULTS["kdf"]
-    kdf_cls = kdf.BACKENDS[kdf_name]
-
-    salt_name = values["salt_algo"]
-    if salt_name is None:
-        salt_name = SELECTORS["salt_algo"].ask(DEFAULTS["salt_algo"]) if interactive else DEFAULTS["salt_algo"]
-    salt_cls = salt.ALGOS[salt_name]
-
-    fields = _fields_for(kdf_cls, salt_cls, authorize)
-    defaults = {**DEFAULTS, **kdf_cls.defaults, **salt_cls.defaults}
-
-    resolved = {
-        "kdf": kdf_name,
-        "salt_algo": salt_name,
-        "hash_len": HASH_LEN,
-        **resolve_fields(fields, values, defaults, interactive, force_allow_soft_constraints),
-    }
-
-    if any(char in resolved["comment"] for char in COMMENT_FORBIDDEN_CHARS):
-        raise click.UsageError("--comment must not contain newlines")
-
-    if authorize:
-        if authorized_keys is None:
-            authorized_keys = _ask_authorized_keys() if interactive else default_authorized_keys_path()
-        target = authorized_keys.expanduser()
-    else:
-        target = resolved["output"]
-
-    registration = None if interactive else _registration_from_flags(resolved["label"], values)
+@options(
+    Generate,
+    interactive=no_option_given(ignoring=["authorize", "authorized_keys", "overwrite_files", "create_parent_dirs"]),
+    help=HelpFormat(default_on_own_line=True, first_column_max=30),
+    epilog=lambda selection: _help_note(kdf.BACKENDS[selection["kdf"]], salt.ALGOS[selection["salt_algo"]]),
+)
+@click.command(context_settings={"help_option_names": ["-h", "--help"], "max_content_width": 120})
+def main(settings):
+    interactive = is_interactive()
+    kdf_cls = kdf.BACKENDS[settings.kdf]
+    salt_cls = salt.ALGOS[settings.salt_algo]
+    resolved = settings.as_dict()
+    target = settings.authorized_keys if settings.authorize else settings.output
 
     try:
-        salt_bytes = salt_cls.digest(resolved["label"], resolved)
+        salt_bytes = salt_cls.digest(settings.label, resolved)
     except SaltError as e:
-        raise click.UsageError(f"{salt_name}: {e}") from e
+        raise click.UsageError(f"{settings.salt_algo}: {e}") from e
     salt_error = kdf_cls.salt_constraints.error_for(len(salt_bytes))
     if salt_error:
-        raise click.UsageError(f"{kdf_name} {salt_error}")
+        raise click.UsageError(f"{settings.kdf} {salt_error}")
 
-    if not authorize:
-        confirm_overwrite(target, overwrite_files)
-    create_parent_dirs = confirm_create_parent_dirs(target, create_parent_dirs, interactive)
+    if not settings.authorize:
+        confirm_overwrite(target, settings.overwrite_files)
+    create_parent_dirs = confirm_create_parent_dirs(target, settings.create_parent_dirs, interactive)
 
     click.echo("Deriving key...")
     try:
         seed_bytes = kdf_cls.run(resolved, salt_bytes)
     except KDFError as e:
-        raise click.UsageError(f"{kdf_name}: {e}") from e
+        raise click.UsageError(f"{settings.kdf}: {e}") from e
 
     recap = (
-        ("kdf", kdf_name),
-        ("salt-algo", salt_name),
-        ("label", repr(resolved["label"])),
+        ("kdf", settings.kdf),
+        ("salt-algo", settings.salt_algo),
+        ("label", repr(settings.label)),
         ("encoding", "utf-8"),
         *salt_cls.recap(resolved),
         *kdf_cls.recap(resolved),
-        ("hash-len", resolved["hash_len"]),
+        ("hash-len", settings.hash_len),
     )
 
-    if authorize:
-        authorize_and_recap(seed_bytes, target, resolved["comment"], recap, create_parent_dirs=create_parent_dirs)
+    if settings.authorize:
+        authorize_and_recap(seed_bytes, target, settings.comment, recap, create_parent_dirs=create_parent_dirs)
         return
 
     priv_path, _ = write_keypair_and_recap(
         seed_bytes,
-        resolved["output"],
-        resolved["comment"],
+        settings.output,
+        settings.comment,
         recap=recap,
-        key_passphrase=resolved["key_passphrase"],
+        key_passphrase=settings.key_passphrase,
         create_parent_dirs=create_parent_dirs,
     )
 
     click.echo()
     if interactive:
-        _register_interactively(resolved["label"], priv_path)
-    elif registration:
-        label, user, host, port = registration
-        register_entry(label, user, host, key=priv_path, port=port)
+        _register_interactively(settings.label, priv_path)
+    elif settings.register is not None:
+        user, host = split_destination(settings.register)
+        register_entry(settings.label, user, host, key=priv_path, port=settings.register_port)
 
 
 def run():

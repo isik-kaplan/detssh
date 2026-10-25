@@ -7,20 +7,15 @@ from unittest.mock import patch
 
 import click
 import pytest
-import questionary
 from click.testing import CliRunner
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from detssh.backends.base import (
-    DEFAULT_TEXT_MARKER,
-    Field,
     _display_path,
-    build_options,
     confirm_create_parent_dirs,
     confirm_overwrite,
-    is_interactive,
-    resolve_fields,
+    note_if_exists,
     write_keypair_and_recap,
 )
 from detssh.backends.kdf import BACKENDS as KDF_BACKENDS
@@ -29,7 +24,7 @@ from detssh.backends.kdf.base import KDFBackend, KDFError, SaltConstraints
 from detssh.backends.salt import ALGOS as SALT_ALGOS
 from detssh.backends.salt import validate_algos
 from detssh.backends.salt.base import SaltAlgo, SaltError
-from detssh.cli import KDFSaltCommand, _fields_for, _peek, main
+from detssh.cli import main
 from detssh.keygen import (
     COMMENT_FORBIDDEN_CHARS,
     ED25519_SEED_LENGTH,
@@ -426,51 +421,6 @@ def test_write_keypair_comment_never_corrupts_pub_file_format(comment):
         assert content.endswith("\n")
 
 
-_PEEK_TOKEN = st.text(alphabet=st.characters(blacklist_characters="="), min_size=1, max_size=8)
-
-
-@st.composite
-def _peek_scenario(draw):
-    flag = "--kdf"
-    default = "unset-default"
-    n_occurrences = draw(st.integers(min_value=0, max_value=5))
-    values = draw(st.lists(_PEEK_TOKEN, min_size=n_occurrences, max_size=n_occurrences))
-    use_equals = draw(st.lists(st.booleans(), min_size=n_occurrences, max_size=n_occurrences))
-    n_noise = draw(st.integers(min_value=0, max_value=5))
-
-    chunks = [
-        [f"{flag}={value}"] if equals else [flag, value] for value, equals in zip(values, use_equals, strict=True)
-    ]
-    chunks += [["--noise"] for _ in range(n_noise)]
-
-    order = draw(st.permutations(range(len(chunks))))
-    argv = [token for i in order for token in chunks[i]]
-    expected = default
-    for i in order:
-        if i < n_occurrences:
-            expected = values[i]
-
-    return argv, flag, default, expected
-
-
-@given(scenario=_peek_scenario())
-@settings(max_examples=1000)
-def test_peek_always_returns_the_last_occurrence(scenario):
-    argv, flag, default, expected = scenario
-    assert _peek(argv, flag, default) == expected
-
-
-@given(kdf_name=st.sampled_from(list(KDF_BACKENDS)), salt_name=st.sampled_from(list(SALT_ALGOS)))
-@settings(max_examples=100)
-def test_fields_for_has_no_key_collisions(kdf_name, salt_name):
-    kdf_cls = KDF_BACKENDS[kdf_name]
-    salt_cls = SALT_ALGOS[salt_name]
-    fields = _fields_for(kdf_cls, salt_cls)
-    common_keys = {"seed", "label", "output", "comment", "key_passphrase"}
-    assert common_keys <= fields.keys()
-    assert len(fields) == len(common_keys) + len(kdf_cls.fields) + len(salt_cls.fields)
-
-
 @given(name=st.text(alphabet=string.ascii_letters + string.digits + "-_.", min_size=1, max_size=20))
 @settings(max_examples=500)
 def test_public_key_path_appends_pub_to_name_only(name):
@@ -586,159 +536,6 @@ def test_write_keypair_mkdir_is_idempotent_for_an_already_existing_parent(monkey
     write_keypair(private_key, public_key, ssh_dir() / "id_ed25519")
 
 
-@given(default_value=st.integers())
-@settings(max_examples=3000)
-def test_resolve_fields_uses_default_when_not_interactive(default_value):
-    fields = {"x": Field("X", kind="int")}
-    resolved = resolve_fields(fields, {"x": None}, {"x": default_value}, interactive=False)
-    assert resolved["x"] == default_value
-
-
-@given(passed_value=st.integers(), default_value=st.integers())
-@settings(max_examples=3000)
-def test_resolve_fields_prefers_passed_value_over_default(passed_value, default_value):
-    fields = {"x": Field("X", kind="int")}
-    resolved = resolve_fields(fields, {"x": passed_value}, {"x": default_value}, interactive=False)
-    assert resolved["x"] == passed_value
-
-
-@given(value=st.one_of(st.none(), st.just("")))
-@settings(max_examples=10)
-def test_resolve_fields_rejects_missing_or_empty_required_field(value):
-    fields = {"seed": Field("Seed", kind="secret", required=True)}
-    with pytest.raises(click.UsageError):
-        resolve_fields(fields, {"seed": value}, {}, interactive=False)
-
-
-def test_resolve_fields_required_error_names_the_flag_with_dashes():
-    fields = {"key_passphrase": Field("Key passphrase", kind="secret", required=True)}
-    with pytest.raises(click.UsageError, match=r"^--key-passphrase must not be empty$"):
-        resolve_fields(fields, {"key_passphrase": ""}, {}, interactive=False)
-
-
-@given(text=st.text(min_size=1))
-@settings(max_examples=3000)
-def test_resolve_fields_accepts_any_non_empty_required_value(text):
-    fields = {"seed": Field("Seed", kind="secret", required=True)}
-    resolved = resolve_fields(fields, {"seed": text}, {}, interactive=False)
-    assert resolved["seed"] == text
-
-
-@given(value=st.one_of(st.just(""), st.just(0), st.just(False), st.text()))
-@settings(max_examples=1000)
-def test_resolve_fields_accepts_any_value_when_not_required(value):
-    fields = {"x": Field("X", kind="text")}
-    resolved = resolve_fields(fields, {"x": value}, {}, interactive=False)
-    assert resolved["x"] == value
-
-
-def test_optional_secret_ask_defaults_to_empty_so_it_can_be_skipped(monkeypatch):
-    captured = {}
-
-    def fake_prompt(message, **kwargs):
-        captured["message"] = message
-        captured.update(kwargs)
-        return kwargs.get("default")
-
-    monkeypatch.setattr(click, "prompt", fake_prompt)
-    field = Field("Key passphrase", kind="secret", required=False)
-    assert field.ask(default="ignored") == ""
-    assert captured["message"] == "Key passphrase"
-    assert captured["default"] == ""
-    assert captured["confirmation_prompt"] is True
-    assert captured["hide_input"] is True
-    assert captured["show_default"] is False
-
-
-def test_required_secret_ask_has_no_default_so_empty_input_reprompts(monkeypatch):
-    captured = {}
-
-    def fake_prompt(message, **kwargs):
-        captured["message"] = message
-        captured.update(kwargs)
-        return "whatever"
-
-    monkeypatch.setattr(click, "prompt", fake_prompt)
-    field = Field("Seed passphrase", kind="secret", required=True)
-    field.ask(default="ignored")
-    assert captured["message"] == "Seed passphrase"
-    assert captured["hide_input"] is True
-    assert captured["confirmation_prompt"] is True
-    assert "default" not in captured
-
-
-@given(values=st.dictionaries(st.text(min_size=1, max_size=5), st.one_of(st.none(), st.integers(), st.text())))
-@settings(max_examples=1000)
-def test_is_interactive_iff_every_value_is_none(values):
-    assert is_interactive(values) == all(v is None for v in values.values())
-
-
-@given(
-    name=st.text(alphabet=string.ascii_lowercase + "_", min_size=1, max_size=10),
-    kind=st.sampled_from(["text", "int", "path", "secret"]),
-    default_value=st.one_of(st.none(), st.integers(), st.text(min_size=1)),
-)
-@settings(max_examples=500)
-def test_build_options_default_is_always_the_none_sentinel(name, kind, default_value):
-    fields = {name: Field(f"{name} message", kind=kind)}
-    options = build_options(fields, {name: default_value})
-    assert len(options) == 1
-    option = options[0]
-    assert option.default is None
-    assert option.opts == [f"--{name.replace('_', '-')}"]
-
-
-def test_build_options_int_kind_gets_int_type():
-    option = build_options({"n": Field("N", kind="int")})[0]
-    assert option.type is click.INT
-
-
-def test_build_options_select_kind_gets_click_choice_with_the_field_choices():
-    option = build_options({"backend": Field("Backend", kind="select", choices=("a", "b"))})[0]
-    assert isinstance(option.type, click.Choice)
-    assert option.type.choices == ("a", "b")
-
-
-def test_build_options_path_kind_gets_a_file_only_click_path_type():
-    option = build_options({"output": Field("Output", kind="path")})[0]
-    assert isinstance(option.type, click.Path)
-    assert option.type.dir_okay is False
-    assert option.type.type is Path
-
-
-def _help_default_note(option):
-    """The "[default: ...]" suffix build_options tucks after DEFAULT_TEXT_MARKER, or None
-    if the field has no default worth noting."""
-    if DEFAULT_TEXT_MARKER not in option.help:
-        return None
-    return option.help.split(DEFAULT_TEXT_MARKER, 1)[1]
-
-
-def test_build_options_help_shows_the_raw_default_for_a_non_path_field():
-    # A value that _display_path would rewrite to "~/looks-like-a-path" if build_options
-    # wrongly ran it through _display_path for a non-path field - it must show as-is.
-    value = str(Path.home() / "looks-like-a-path")
-    option = build_options({"label": Field("Label", kind="text")}, {"label": value})[0]
-    assert _help_default_note(option) == f"[default: {value}]"
-
-
-def test_build_options_help_shows_the_display_path_for_a_path_field():
-    value = Path.home() / "somewhere"
-    option = build_options({"output": Field("Output", kind="path")}, {"output": value})[0]
-    assert _help_default_note(option) == "[default: ~/somewhere]"
-
-
-def test_build_options_calls_a_callable_default_for_the_help_text():
-    option = build_options({"label": Field("Label", kind="text")}, {"label": lambda: "computed"})[0]
-    assert _help_default_note(option) == "[default: computed]"
-
-
-@pytest.mark.parametrize("empty_default", [None, ""])
-def test_build_options_omits_the_default_note_for_none_and_empty_string(empty_default):
-    option = build_options({"label": Field("Label", kind="text")}, {"label": empty_default})[0]
-    assert _help_default_note(option) is None
-
-
 @given(
     name=st.text(alphabet=string.ascii_letters + string.digits, min_size=1, max_size=10),
     overwrite_files=st.booleans(),
@@ -770,11 +567,6 @@ def test_confirm_overwrite_prompts_when_only_the_public_key_exists(monkeypatch, 
     confirm_overwrite(output, overwrite_files=False)
 
     assert seen["message"] == f"{output} already exists. Overwrite?"
-
-
-def test_field_hint_joins_multiple_parts_with_a_comma_and_space():
-    field = Field("x", kind="int", min_value=1, max_value=10, soft_max=5)
-    assert field.hint() == " (1-10, soft max 5)"
 
 
 def test_confirm_create_parent_dirs_is_a_noop_when_the_parent_already_exists(monkeypatch, tmp_path):
@@ -865,95 +657,6 @@ def test_confirm_create_parent_dirs_warns_when_interactive_flag_off_and_outside_
     assert capsys.readouterr().out == "Warning: ~/elsewhere is outside ~/.ssh.\n"
 
 
-@given(
-    value=st.integers(min_value=-(10**6), max_value=10**6),
-    min_value=st.integers(min_value=-(10**6), max_value=10**6),
-    max_value=st.integers(min_value=-(10**6), max_value=10**6),
-)
-@settings(max_examples=2000)
-def test_field_hard_error_for_matches_min_max(value, min_value, max_value):
-    field = Field("x", kind="int", min_value=min_value, max_value=max_value)
-    error = field.hard_error_for(value)
-    assert (error is not None) == (value < min_value or value > max_value)
-
-
-@given(value=st.integers(min_value=0, max_value=10**9), soft_max=st.integers(min_value=0, max_value=10**9))
-@settings(max_examples=2000)
-def test_field_soft_error_for_matches_soft_max(value, soft_max):
-    field = Field("x", kind="int", soft_max=soft_max)
-    error = field.soft_error_for(value)
-    assert (error is not None) == (value > soft_max)
-
-
-@given(value=st.integers())
-@settings(max_examples=500)
-def test_field_without_constraints_never_errors(value):
-    field = Field("x", kind="int")
-    assert field.hard_error_for(value) is None
-    assert field.soft_error_for(value) is None
-    assert field.hint() == ""
-
-
-def test_resolve_fields_defers_soft_violations_to_one_consolidated_confirm(monkeypatch, capsys):
-    fields = {
-        "a": Field("A", kind="int", soft_max=10),
-        "b": Field("B", kind="int", soft_max=10),
-    }
-    values = {"a": None, "b": None}
-    defaults = {"a": 1, "b": 1}
-
-    asked_values = iter([50, 60])
-    monkeypatch.setattr(Field, "ask", lambda self, default: next(asked_values))
-
-    confirm_calls = []
-    monkeypatch.setattr(click, "confirm", lambda message: confirm_calls.append(message) or True)
-
-    resolved = resolve_fields(fields, values, defaults, interactive=True)
-
-    assert resolved == {"a": 50, "b": 60}
-    assert confirm_calls == ["Continue anyway?"]
-    output = capsys.readouterr().out
-    assert output.splitlines()[0] == "These may take a long time:"
-    assert "--a" in output
-    assert "--b" in output
-
-
-def test_resolve_fields_aborts_if_consolidated_confirm_declined(monkeypatch):
-    fields = {"a": Field("A", kind="int", soft_max=10)}
-    values = {"a": None}
-    defaults = {"a": 1}
-
-    monkeypatch.setattr(Field, "ask", lambda self, default: 50)
-    monkeypatch.setattr(click, "confirm", lambda message: False)
-
-    with pytest.raises(click.Abort):
-        resolve_fields(fields, values, defaults, interactive=True)
-
-
-def test_resolve_fields_hard_violations_still_reask_immediately_in_interactive_mode(monkeypatch, capsys):
-    fields = {"a": Field("A", kind="int", max_value=10)}
-    values = {"a": None}
-    defaults = {"a": 1}
-
-    asked_values = iter([50, 5])
-    monkeypatch.setattr(Field, "ask", lambda self, default: next(asked_values))
-
-    resolved = resolve_fields(fields, values, defaults, interactive=True)
-    assert resolved == {"a": 5}
-    assert capsys.readouterr().out == "Error: --a must be at most 10\n"
-
-
-def test_resolve_fields_never_confirms_in_non_interactive_mode(monkeypatch):
-    fields = {"a": Field("A", kind="int", soft_max=10)}
-    values = {"a": 50}
-    defaults = {"a": 1}
-
-    monkeypatch.setattr(click, "confirm", lambda message: pytest.fail("should not prompt in flag mode"))
-
-    with pytest.raises(click.UsageError, match="force-allow-soft-constraints"):
-        resolve_fields(fields, values, defaults, interactive=False)
-
-
 _PATH_SEGMENT = st.text(alphabet=string.ascii_letters + string.digits + "_-.", min_size=1, max_size=8).filter(
     lambda s: s not in (".", "..")
 )
@@ -979,143 +682,6 @@ def test_display_path_leaves_paths_outside_home_untouched(name):
         path = Path(other_dir) / name
         assert _display_path(path) == str(path)
         assert not _display_path(path).startswith("~")
-
-
-def test_hint_shows_only_a_floor_when_theres_no_ceiling():
-    field = Field("x", kind="int", min_value=5)
-    assert field.hint() == " (>= 5)"
-
-
-def test_hint_shows_only_a_ceiling_when_theres_no_floor():
-    field = Field("x", kind="int", max_value=5)
-    assert field.hint() == " (<= 5)"
-
-
-def test_hard_error_for_passes_none_through_without_checking_bounds():
-    field = Field("x", kind="int", min_value=5, max_value=10)
-    assert field.hard_error_for(None) is None
-
-
-def test_ask_int_delegates_to_click_prompt_with_int_type(monkeypatch):
-    captured = {}
-
-    def fake_prompt(message, **kwargs):
-        captured["message"] = message
-        captured.update(kwargs)
-        return 7
-
-    monkeypatch.setattr(click, "prompt", fake_prompt)
-    field = Field("Count", kind="int")
-    assert field.ask(default=3) == 7
-    assert captured["message"] == "Count"
-    assert captured["type"] is int
-    assert captured["default"] == 3
-
-
-def test_ask_path_shows_the_default_in_the_message_when_one_is_set(monkeypatch):
-    captured = {}
-
-    def fake_prompt(message, **kwargs):
-        captured["message"] = message
-        captured.update(kwargs)
-        return Path("/chosen")
-
-    monkeypatch.setattr(click, "prompt", fake_prompt)
-    field = Field("Output path", kind="path")
-    assert field.ask(default=Path("/default/key")) == Path("/chosen")
-    assert "/default/key" in captured["message"]
-    assert captured["default"] == Path("/default/key")
-    assert captured["show_default"] is False
-    assert isinstance(captured["type"], click.Path)
-    assert captured["type"].dir_okay is False
-    assert captured["type"].type is Path
-
-
-def test_ask_path_warns_when_the_default_output_already_exists(monkeypatch, tmp_path, capsys):
-    default = tmp_path / "id_ed25519"
-    default.write_text("existing key")
-    monkeypatch.setattr(click, "prompt", lambda message, **kwargs: Path("/chosen"))
-
-    field = Field("Output path", kind="path")
-    field.ask(default=default)
-
-    assert capsys.readouterr().out == f"Note: {default} already exists - enter a different path to avoid this.\n"
-
-
-def test_ask_path_warns_when_only_the_public_counterpart_exists(monkeypatch, tmp_path, capsys):
-    default = tmp_path / "id_ed25519"
-    (tmp_path / "id_ed25519.pub").write_text("existing pub key")
-    monkeypatch.setattr(click, "prompt", lambda message, **kwargs: Path("/chosen"))
-
-    field = Field("Output path", kind="path")
-    field.ask(default=default)
-
-    assert capsys.readouterr().out == f"Note: {default} already exists - enter a different path to avoid this.\n"
-
-
-def test_ask_path_omits_the_bracketed_default_when_there_is_none(monkeypatch):
-    captured = {}
-
-    def fake_prompt(message, **kwargs):
-        captured["message"] = message
-        return Path("/chosen")
-
-    monkeypatch.setattr(click, "prompt", fake_prompt)
-    field = Field("Output path", kind="path")
-    field.ask(default=None)
-    assert "[" not in captured["message"]
-
-
-def test_ask_select_returns_the_chosen_answer(monkeypatch):
-    captured = {}
-
-    def fake_select(message, choices, default):
-        captured["message"] = message
-        return type("Q", (), {"ask": lambda self: "b"})()
-
-    monkeypatch.setattr(questionary, "select", fake_select)
-    field = Field("Backend", kind="select", choices=("a", "b"))
-    assert field.ask(default="a") == "b"
-    assert captured["message"] == "Backend"
-
-
-def test_ask_select_aborts_when_the_user_cancels(monkeypatch):
-    monkeypatch.setattr(
-        questionary, "select", lambda message, choices, default: type("Q", (), {"ask": lambda self: None})()
-    )
-    field = Field("Backend", kind="select", choices=("a", "b"))
-    with pytest.raises(click.Abort):
-        field.ask(default="a")
-
-
-def test_ask_falls_back_to_plain_prompt_for_text_kind(monkeypatch):
-    captured = {}
-
-    def fake_prompt(message, **kwargs):
-        captured["message"] = message
-        captured.update(kwargs)
-        return "typed"
-
-    monkeypatch.setattr(click, "prompt", fake_prompt)
-    field = Field("Label", kind="text")
-    assert field.ask(default="fallback") == "typed"
-    assert captured["message"] == "Label"
-    assert captured["default"] == "fallback"
-    assert captured["show_default"] is True
-
-
-def test_resolve_fields_calls_a_callable_default_in_interactive_mode(monkeypatch):
-    fields = {"output": Field("Output", kind="path")}
-    calls = []
-
-    def callable_default():
-        calls.append(1)
-        return Path("/computed/default")
-
-    monkeypatch.setattr(Field, "ask", lambda self, default: default)
-    resolved = resolve_fields(fields, {"output": None}, {"output": callable_default}, interactive=True)
-    assert resolved["output"] == Path("/computed/default")
-    assert calls == [1]
 
 
 def test_write_keypair_and_recap_converts_value_error_to_usage_error(tmp_path):
@@ -1250,37 +816,6 @@ def test_all_salt_algos_preserve_the_original_error_message():
         assert str(exc_info.value) == expected
 
 
-def test_format_options_is_a_no_op_when_the_command_has_no_options():
-    cmd = KDFSaltCommand(name="detssh-test", params=[])
-    ctx = click.Context(cmd, info_name="detssh-test", help_option_names=[])
-    formatter = click.HelpFormatter()
-
-    cmd.format_options(ctx, formatter)
-
-    assert formatter.getvalue() == ""
-
-
-def test_format_options_sizes_the_first_column_from_option_names_not_help_text():
-    # A short option name paired with a long help string: first_col must come from the
-    # *name* column (short, so text wraps wide) - using the help column instead (long,
-    # clamped to the 30-char cap) would wrap this description much narrower.
-    cmd = KDFSaltCommand(
-        name="detssh-test",
-        params=[click.Option(["--x"], help="word " * 20 + f"{DEFAULT_TEXT_MARKER}[default: 1]")],
-    )
-    ctx = click.Context(cmd, info_name="detssh-test", help_option_names=[])
-    formatter = click.HelpFormatter()
-
-    cmd.format_options(ctx, formatter)
-
-    # first_col = len("--x") = 3, so text_width = 78 - 3 - 4 = 71: "word " * 14 is 70
-    # chars, the 15th "word" fits (75 > 71 is false at 14, true at 15) - textwrap.wrap
-    # breaks after the 14th "word", producing a line noticeably longer than the ~44-char
-    # width a wrongly-sized (clamped to 30) first column would produce.
-    first_line = formatter.getvalue().splitlines()[1]
-    assert len(first_line.strip()) > 60
-
-
 def test_cli_wraps_a_salt_backend_error_as_a_clean_usage_error(monkeypatch, tmp_path):
     from detssh.backends.salt.blake2b import Blake2b
 
@@ -1345,3 +880,30 @@ def test_cli_key_passphrase_encrypts_the_written_private_key(tmp_path):
     with pytest.raises(TypeError):
         serialization.load_ssh_private_key(key_path.read_bytes(), password=None)
     serialization.load_ssh_private_key(key_path.read_bytes(), password=b"hunter2")
+
+
+def test_note_if_exists_warns_when_the_default_output_already_exists(tmp_path, capsys):
+    default = tmp_path / "id_ed25519"
+    default.write_text("existing key")
+
+    note_if_exists(default)
+
+    assert capsys.readouterr().out == f"Note: {default} already exists - enter a different path to avoid this.\n"
+
+
+def test_note_if_exists_warns_when_only_the_public_counterpart_exists(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    default = tmp_path / ".ssh" / "id_ed25519"
+    default.parent.mkdir()
+    (default.parent / "id_ed25519.pub").write_text("existing pub key")
+
+    note_if_exists(default)
+
+    assert capsys.readouterr().out == "Note: ~/.ssh/id_ed25519 already exists - enter a different path to avoid this.\n"
+
+
+def test_note_if_exists_says_nothing_for_a_free_path_or_no_default(tmp_path, capsys):
+    note_if_exists(tmp_path / "id_ed25519")
+    note_if_exists(None)
+
+    assert capsys.readouterr().out == ""

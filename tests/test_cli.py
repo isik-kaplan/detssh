@@ -6,9 +6,10 @@ import click
 import pytest
 import questionary
 from click.testing import CliRunner
+from isik.cli.testing import assert_reachable
 
 from detssh.backends.base import confirm_overwrite
-from detssh.cli import _peek, _register_interactively, main, run
+from detssh.cli import _register_interactively, main, run
 from detssh.keygen import default_output_path, keypair_from_seed, write_keypair
 from detssh.registry import load_registry
 from detssh.ssh_config import hosts_file_path, ssh_config_path
@@ -161,25 +162,32 @@ def test_bcrypt_pbkdf_zero_rounds_gives_a_clean_error_not_a_traceback(tmp_path):
     assert "bcrypt_pbkdf:" in result.output
 
 
-def test_peek_takes_last_occurrence_of_a_repeated_flag():
-    args = ["--kdf", "argon2id", "--kdf", "pbkdf2"]
-    assert _peek(args, "--kdf", "default") == "pbkdf2"
+def _help_for(*args):
+    result = CliRunner().invoke(main, [*args, "--help"])
+    assert result.exit_code == 0, result.output
+    return result.output
 
 
-def test_peek_takes_last_occurrence_with_equals_form():
-    args = ["--kdf=argon2id", "--kdf=pbkdf2"]
-    assert _peek(args, "--kdf", "default") == "pbkdf2"
+def test_help_shows_the_options_of_the_last_kdf_given():
+    assert "PBKDF2 iterations" in _help_for("--kdf", "argon2id", "--kdf", "pbkdf2")
 
 
-def test_peek_falls_back_to_default_for_a_trailing_flag_with_no_value():
-    # A flag with nothing after it isn't a "--kdf VALUE" pair to consume - click's real
-    # parsing will reject it later; _peek just shouldn't index past the end of args.
-    assert _peek(["--kdf"], "--kdf", "default") == "default"
-    assert _peek(["--seed", "x", "--kdf"], "--kdf", "default") == "default"
+def test_help_shows_the_options_of_the_last_kdf_given_in_equals_form():
+    assert "PBKDF2 iterations" in _help_for("--kdf=argon2id", "--kdf=pbkdf2")
 
 
-def test_peek_equals_form_only_splits_on_the_first_equals_sign():
-    assert _peek(["--kdf=a=b"], "--kdf", "default") == "a=b"
+def test_a_trailing_kdf_flag_with_no_value_is_refused_by_click():
+    result = CliRunner().invoke(main, ["--seed", "x", "--kdf"])
+
+    assert result.exit_code == 2
+    assert "Option '--kdf' requires an argument." in result.output
+
+
+def test_an_unknown_kdf_is_refused_with_the_choices_not_a_traceback():
+    result = CliRunner().invoke(main, ["--kdf=a=b", "--seed", "x"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--kdf': 'a=b' is not one of" in result.output
 
 
 def test_repeated_kdf_flag_rejects_options_irrelevant_to_the_resolved_backend(tmp_path):
@@ -733,3 +741,122 @@ def test_a_full_interactive_run_generates_and_registers_in_one_go(monkeypatch, t
     assert "Run: ssh isik:personal:contaboo" in result.output
     entry = load_registry()["isik:personal:contaboo"]
     assert (entry.user, entry.host, entry.key) == ("root", "contaboo.com", key_path)
+
+
+def test_every_setting_is_reachable_by_option_and_question_or_says_why():
+    assert_reachable(main)
+
+
+def _recording_prompt(answers, asked):
+    """A click.prompt stand-in: answers by question text (the default otherwise), and records how
+    each question was asked."""
+
+    def prompt(message, **kwargs):
+        asked[message] = kwargs
+        return answers.get(message, kwargs.get("default"))
+
+    return prompt
+
+
+def test_interactive_secrets_are_hidden_and_confirmed_and_only_the_seed_is_required(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(questionary, "select", _fake_select)
+    monkeypatch.setattr(click, "confirm", lambda message, default=None: False)
+    asked = {}
+    output_question = "Output path for the private key (ssh-keygen style, e.g. ~/.ssh/id_ed25519) [~/.ssh/id_ed25519]"
+    answers = {"Seed passphrase": "s", "PBKDF2 iterations (soft max 50000000)": 2, output_question: tmp_path / "key"}
+    monkeypatch.setattr(click, "prompt", _recording_prompt(answers, asked))
+
+    result = CliRunner().invoke(main, [])
+
+    assert result.exit_code == 0, result.output
+    assert asked["Seed passphrase"] == {"hide_input": True, "confirmation_prompt": True}
+    assert asked["Passphrase to encrypt the private key file with (leave empty for none)"] == {
+        "hide_input": True,
+        "confirmation_prompt": True,
+        "default": "",
+        "show_default": False,
+    }
+    assert asked[output_question]["default"] == tmp_path / ".ssh" / "id_ed25519"
+    assert (tmp_path / "key").exists()
+
+
+@pytest.mark.parametrize("flag", ["--overwrite-files", "--create-parent-dirs"])
+def test_a_flag_that_doesnt_count_alone_keeps_interactive_mode(monkeypatch, flag):
+    asked = []
+
+    def select(message, choices, default):
+        asked.append(message)
+        return type("Q", (), {"ask": lambda self: None})()  # cancel at the first question
+
+    monkeypatch.setattr(questionary, "select", select)
+
+    result = CliRunner().invoke(main, [flag])
+
+    assert result.exit_code == 1
+    assert asked == ["What do you want to do?"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["--label", "x"], ["--register", "a@b"], ["--register-port", "22"], ["--comment", "c"]],
+)
+def test_any_other_option_switches_to_flag_mode(args):
+    result = CliRunner().invoke(main, args)
+
+    assert result.exit_code == 2
+    assert "Error: --seed is required" in result.output
+
+
+def _scrypt_select(message, choices, default):
+    answer = "scrypt" if "scrypt" in choices else default
+    return type("Q", (), {"ask": lambda self: answer})()
+
+
+def _oversized_scrypt_answers(key_path, *after):
+    return "\n".join(["s", "s", "", "4", "17", "9", "", str(key_path), "", "", "", *after]) + "\n"
+
+
+def test_interactive_soft_limits_are_confirmed_once_at_the_end_and_can_be_declined(monkeypatch, tmp_path):
+    monkeypatch.setattr(questionary, "select", _scrypt_select)
+    key_path = tmp_path / "key"
+
+    result = CliRunner().invoke(main, [], input=_oversized_scrypt_answers(key_path, "n"))
+
+    assert result.exit_code == 1
+    assert (
+        "These may take a long time:\n"
+        "  --block-size is 17, above the recommended safe limit of 16 - this may take a long time\n"
+        "  --parallelism is 9, above the recommended safe limit of 8 - this may take a long time\n"
+        "Continue anyway? [y/N]: n\n"
+    ) in result.output
+    assert "Deriving key" not in result.output
+    assert not key_path.exists()
+
+
+def test_interactive_soft_limits_go_ahead_when_confirmed(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setattr(questionary, "select", _scrypt_select)
+    key_path = tmp_path / "key"
+
+    result = CliRunner().invoke(main, [], input=_oversized_scrypt_answers(key_path, "y", "n"))
+
+    assert result.exit_code == 0, result.output
+    assert "block-size (r)     17" in result.output
+    assert key_path.exists()
+
+
+def test_interactive_hard_limits_are_asked_again_straight_away(monkeypatch, tmp_path):
+    monkeypatch.setattr(questionary, "select", _fake_select)
+    key_path = tmp_path / "key"
+    answers = ["s", "s", "", "2", "99", "16", str(key_path), "", "", "", "n"]
+
+    result = CliRunner().invoke(main, [], input="\n".join(answers) + "\n")
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "Salt digest size, in bytes (1-64) [16]: 99\n"
+        "Error: --salt-digest-size must be at most 64\n"
+        "Salt digest size, in bytes (1-64) [16]: 16\n"
+    ) in result.output
+    assert "salt-digest-size   16" in result.output

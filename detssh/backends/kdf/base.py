@@ -1,3 +1,6 @@
+from detssh.backends.base import NoSettings
+
+
 class SaltConstraints:
     def __init__(self, min_size=None, max_size=None, exact_size=None):
         self.min_size = min_size
@@ -24,8 +27,7 @@ class KDFError(Exception):
 class KDFBackend:
     name = None
     salt_constraints = None
-    fields = {}
-    defaults = {}
+    settings = NoSettings
 
     @classmethod
     def run(cls, resolved, salt):

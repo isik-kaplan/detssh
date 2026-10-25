@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -386,13 +386,14 @@ wheels = [
 
 [[package]]
 name = "detssh"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "argon2-cffi" },
     { name = "bcrypt" },
     { name = "click" },
     { name = "cryptography" },
+    { name = "isik", extra = ["cli"] },
     { name = "questionary" },
 ]
 
@@ -411,6 +412,7 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "click", specifier = ">=8.1" },
     { name = "cryptography", specifier = ">=41.0" },
+    { name = "isik", extras = ["cli"], specifier = ">=0.34.0" },
     { name = "questionary", specifier = ">=2.1.1" },
 ]
 
@@ -491,6 +493,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "isik"
+version = "0.34.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/79/d047a3f3e02396569fe6eca71700ce0a395ceb009963139f1ec0adf99de5/isik-0.34.0.tar.gz", hash = "sha256:c54a3a2b3fa6f397d114190a084315446938192d4df5038fa33cde87e85c92a5", size = 739909, upload-time = "2026-10-25T03:49:52.558Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/ee/49c8e315b9f9893549d4515eac99873b4c3846e2eb35be0ae79b3f44bda8/isik-0.34.0-py3-none-any.whl", hash = "sha256:442024f6749a83c2bb84a706d7fde499300a8ec0cb2bc00b115755d897e0cd82", size = 281770, upload-time = "2026-10-25T03:49:50.878Z" },
+]
+
+[package.optional-dependencies]
+cli = [
+    { name = "click" },
+    { name = "questionary" },
 ]
 
 [[package]]

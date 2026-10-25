@@ -1,19 +1,17 @@
 import bcrypt
+from isik.common.settings import Setting, Settings
 
-from detssh.backends.base import Field
 from detssh.backends.kdf.base import KDFBackend, KDFError, SaltConstraints
+
+
+class BcryptPbkdfSettings(Settings):
+    rounds = Setting(int, "bcrypt_pbkdf rounds", default=16, soft_max=2000)
 
 
 class BcryptPbkdf(KDFBackend):
     name = "bcrypt_pbkdf"
     salt_constraints = SaltConstraints(min_size=1)
-
-    fields = {
-        "rounds": Field("bcrypt_pbkdf rounds", kind="int", soft_max=2000),
-    }
-    defaults = {
-        "rounds": 16,
-    }
+    settings = BcryptPbkdfSettings
 
     @classmethod
     def run(cls, resolved, salt):

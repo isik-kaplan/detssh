@@ -30,8 +30,8 @@ def current_defaults():
         "kdf": cli.DEFAULT_KDF,
         "salt_algo": cli.DEFAULT_SALT_ALGO,
         "hash_len": cli.HASH_LEN,
-        "kdf_defaults": {name: cls.defaults for name, cls in KDF_BACKENDS.items()},
-        "salt_defaults": {name: cls.defaults for name, cls in SALT_ALGOS.items()},
+        "kdf_defaults": {name: cls.settings().as_dict() for name, cls in KDF_BACKENDS.items()},
+        "salt_defaults": {name: cls.settings().as_dict() for name, cls in SALT_ALGOS.items()},
     }
 
 
@@ -41,5 +41,7 @@ def test_derivation_defaults_match_the_golden_file():
 
 def test_cli_defaults_are_the_ones_pinned():
     # The CLI builds its defaults from the same constants; make sure it still does.
-    assert cli.DEFAULTS["kdf"] == cli.DEFAULT_KDF
-    assert cli.DEFAULTS["salt_algo"] == cli.DEFAULT_SALT_ALGO
+    defaults = cli.Generate(seed="x")
+    assert defaults.kdf == cli.DEFAULT_KDF
+    assert defaults.salt_algo == cli.DEFAULT_SALT_ALGO
+    assert defaults.hash_len == cli.HASH_LEN

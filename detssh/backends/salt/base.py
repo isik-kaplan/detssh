@@ -1,3 +1,6 @@
+from detssh.backends.base import NoSettings
+
+
 class SaltError(Exception):
     pass
 
@@ -7,8 +10,7 @@ class SaltAlgo:
     digest_size = None
     min_digest_size = None
     max_digest_size = None
-    fields = {}
-    defaults = {}
+    settings = NoSettings
 
     @classmethod
     def is_variable(cls):

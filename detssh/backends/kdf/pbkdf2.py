@@ -1,19 +1,18 @@
 import hashlib
 
-from detssh.backends.base import Field
+from isik.common.settings import Setting, Settings
+
 from detssh.backends.kdf.base import NO_SALT_CONSTRAINTS, KDFBackend, KDFError
+
+
+class Pbkdf2Settings(Settings):
+    iterations = Setting(int, "PBKDF2 iterations", default=600_000, soft_max=50_000_000)
 
 
 class Pbkdf2(KDFBackend):
     name = "pbkdf2"
     salt_constraints = NO_SALT_CONSTRAINTS
-
-    fields = {
-        "iterations": Field("PBKDF2 iterations", kind="int", soft_max=50_000_000),
-    }
-    defaults = {
-        "iterations": 600_000,
-    }
+    settings = Pbkdf2Settings
 
     @classmethod
     def run(cls, resolved, salt):
