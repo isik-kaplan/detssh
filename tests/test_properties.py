@@ -364,8 +364,12 @@ def test_scrypt_passes_the_exact_maxmem_formula_to_hashlib(monkeypatch):
 def test_scrypt_preserves_the_original_error_message():
     resolved = _resolved("scrypt", "correct horse battery staple")
     resolved.update(cost=3, block_size=8, parallelism=1)  # 3 is not a power of two
-    with pytest.raises(KDFError, match=r"^n must be a power of 2\.$"):
+    # The wording is CPython's and changes between versions (3.15 dropped the trailing period).
+    with pytest.raises(ValueError) as original:
+        hashlib.scrypt(b"x", salt=b"0" * 16, n=3, r=8, p=1, dklen=32)
+    with pytest.raises(KDFError) as raised:
         KDF_BACKENDS["scrypt"].run(resolved, b"0" * 16)
+    assert str(raised.value) == str(original.value)
 
 
 def test_pbkdf2_preserves_the_original_error_message():

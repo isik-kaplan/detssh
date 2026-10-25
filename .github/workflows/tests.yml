@@ -17,6 +17,8 @@ jobs:
         os-version: [ubuntu-22.04]
 
     runs-on: ${{ matrix.os-version }}
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
 
     steps:
       - uses: actions/checkout@v4
