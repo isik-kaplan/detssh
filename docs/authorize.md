@@ -13,6 +13,10 @@ left untouched, so running it twice is harmless. The interactive wizard
 asks about this up front too ("Only add the public key to an
 authorized_keys file").
 
+It still takes the seed, and computes the private key in memory to get the
+public one, so only run it on a machine you trust. For one you don't, copy
+the public key over instead ([security.md](security.md#where-to-run-detssh)).
+
 In flag mode, add `--authorize` to the usual flags, plus `--authorized-keys
 FILE` for a file other than `~/.ssh/authorized_keys`. `--output`,
 `--key-passphrase`, `--register` and `--overwrite-files` are rejected

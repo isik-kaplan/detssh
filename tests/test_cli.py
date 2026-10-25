@@ -15,6 +15,14 @@ from detssh.registry import load_registry
 from detssh.ssh_config import hosts_file_path, ssh_config_path
 
 
+@pytest.fixture(autouse=True)
+def hardened(monkeypatch):
+    # run() hardens the real process (no core dumps, no debugger attaching), which pytest must not get.
+    calls = []
+    monkeypatch.setattr("detssh.cli.harden", lambda: calls.append("harden"))
+    return calls
+
+
 def test_confirm_overwrite_accepts_plain_string_path(tmp_path):
     confirm_overwrite(str(tmp_path / "nonexistent"), overwrite_files=False)
 
@@ -485,6 +493,25 @@ def test_run_dispatches_everything_else_to_the_keygen_command(monkeypatch, tmp_p
 
     assert exc_info.value.code == 0
     assert (tmp_path / ".ssh" / "id_ed25519").exists()
+
+
+def test_run_hardens_the_process_before_the_keygen_command(monkeypatch, hardened):
+    monkeypatch.setattr("sys.argv", ["detssh", "--help"])
+    monkeypatch.setattr("detssh.cli.main", lambda **kwargs: hardened.append("main"))
+
+    run()
+
+    assert hardened == ["harden", "main"]
+
+
+def test_run_leaves_the_process_alone_for_ssh_subcommands(monkeypatch, tmp_path, hardened):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    monkeypatch.setattr("sys.argv", ["detssh", "ssh", "list"])
+
+    with pytest.raises(SystemExit):
+        run()
+
+    assert hardened == []
 
 
 def test_run_passes_the_ssh_prog_name_through_to_the_ssh_group(monkeypatch, capsys):

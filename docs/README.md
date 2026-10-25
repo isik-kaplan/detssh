@@ -6,5 +6,6 @@
 - [Naming labels](labels.md): a label convention, and why labels are safe to share
 - [Backends](backends.md): KDFs, salt algorithms, their options and limits
 - [Flag reference](reference.md): every flag and subcommand
+- [Security model](security.md): where to run detssh, and what it does to keep the seed from leaking
 - [Determinism guarantee](determinism.md): when the same input stops giving the same key
 - [Development](development.md): tests, coverage, mutation testing

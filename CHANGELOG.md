@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-25
+
+### Added
+
+- Before asking for the seed, detssh now hardens its own process,
+  best-effort: core dumps are off; on Linux the process is undumpable, so
+  other processes running as your user can't attach or read its memory, and
+  its memory is locked against swapping when the memlock limit is
+  unlimited; on macOS debuggers are refused. `detssh ssh` subcommands, which
+  never see a seed, are left alone.
+- `docs/security.md`: where to run detssh and what the hardening does and
+  doesn't cover. `--authorize` still computes the private key in memory, so
+  the docs now say to use it only on trusted machines and to copy the
+  public key to the rest.
+
 ## [0.8.0] - 2026-10-25
 
 ### Changed

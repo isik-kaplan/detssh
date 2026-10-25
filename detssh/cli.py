@@ -26,6 +26,7 @@ from detssh.backends.base import (
 )
 from detssh.backends.kdf.base import KDFError
 from detssh.backends.salt.base import SaltError
+from detssh.hardening import harden
 from detssh.keygen import (
     COMMENT_FORBIDDEN_CHARS,
     ED25519_SEED_LENGTH,
@@ -278,6 +279,7 @@ def run():
 
         ssh(args=argv[1:], prog_name="detssh ssh")
     else:
+        harden()
         main(args=argv, prog_name="detssh")
 
 
