@@ -1,12 +1,12 @@
 name: Tests
 
+# On master, Publish runs this through workflow_call and only releases once it passes, so it isn't
+# also triggered by push here: that would run every test twice.
 on:
-  push:
-    branches:
-      - master
   pull_request:
     branches:
       - master
+  workflow_call:
 
 jobs:
   test:
