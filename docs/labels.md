@@ -30,4 +30,5 @@ two users is two labels (`client:cloud:web1`, `client:cloud:web1-deploy`).
 The label is also the salt, so it's part of what derives the key: renaming
 one means a different key. It's safe to share - a salt isn't a secret, and
 a guessable label like these adds nothing an attacker doesn't already
-assume. All of the key's security rests on the seed passphrase.
+assume. All of the key's security rests on the seed passphrase - see
+[how strong it should be](security.md#how-strong-the-seed-should-be).

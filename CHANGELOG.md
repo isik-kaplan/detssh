@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-26
+
+### Added
+
+- detssh now stops before deriving from a seed that looks weak, rated by
+  zxcvbn (a new dependency) as fewer than about 2^50 guesses. Interactive
+  mode warns and asks, defaulting to no; flag mode fails unless you pass
+  `--accept-weak-seed`. Separators aren't counted and the label and comment
+  count as known, so neither can pad a weak seed past it. It catches common
+  passwords, patterns and short famous phrases, but can't tell a quote or a
+  sentence from random words: passing it doesn't make a seed strong.
+- `docs/security.md`: how strong the seed needs to be against offline
+  guessing, why a long quote isn't strong, what makes a self-written
+  sentence weak, where the numbers come from, and what the weak-seed check
+  does and doesn't catch. Also what's public: the label and KDF settings
+  aren't secret, and the public key's comment is empty unless you pass
+  `--comment`.
+
+### Changed
+
+- Flag-mode scripts using a weak seed now fail until they pass
+  `--accept-weak-seed` or use a stronger seed. Derived keys are unchanged.
+- Releases wait for the tests: the publish workflow now runs the test and
+  mutation jobs first and only publishes if they pass.
+
 ## [0.9.0] - 2026-10-25
 
 ### Added

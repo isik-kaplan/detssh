@@ -49,6 +49,8 @@ Options:
   --force-allow-soft-constraints  Flag mode only: skip the 'this may take a long
                                   time' confirmation for oversized cost knobs.
                                   Interactive mode always asks.
+  --accept-weak-seed              Flag mode only: use the seed even if it looks
+                                  weak. Interactive mode warns and asks instead.
   -h, --help                      Show this message and exit.
 
   Options below are for --kdf=argon2id --salt-algo=blake2b (defaults, unless you passed both already).

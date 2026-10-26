@@ -20,6 +20,7 @@ and `--create-parent-dirs` switches to flag mode.
 | `--register USER@HOST` | off | Register the key for `ssh <label>`. Needs `--label`. |
 | `--register-port` | 22 | Port for `--register`. |
 | `--force-allow-soft-constraints` | off | Allow cost options above their soft max in flag mode. |
+| `--accept-weak-seed` | off | Use a seed that [looks weak](security.md#the-weak-seed-check) in flag mode. Interactive mode asks instead. |
 | `-h`, `--help` | | Help for the chosen `--kdf` / `--salt-algo`. |
 
 `--authorize` can't be combined with `--output`, `--key-passphrase`,

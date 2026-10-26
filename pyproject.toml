@@ -1,6 +1,6 @@
 [project]
 name = "detssh"
-version = "0.9.0"
+version = "0.10.0"
 description = "Deterministic Ed25519 SSH key generation from a seed passphrase, via configurable KDF and salt-hash backends."
 readme = "README.md"
 authors = [
@@ -21,6 +21,7 @@ dependencies = [
     "questionary>=2.1.1",
     "bcrypt>=5.0.0",
     "isik[cli]>=0.34.0",
+    "zxcvbn>=4.5.0",
 ]
 
 [project.urls]
@@ -30,8 +31,8 @@ Repository = "https://github.com/isik-kaplan/detssh"
 [project.scripts]
 detssh = "detssh.cli:run"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "hypothesis>=6.156.9",
     "mutmut>=3.8.0",
     "pytest>=8.0.0",

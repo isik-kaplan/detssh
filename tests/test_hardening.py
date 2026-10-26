@@ -100,8 +100,10 @@ def test_harden_really_makes_the_process_undumpable_on_linux():
 
 
 def test_a_hardened_run_still_derives_and_writes_the_key(tmp_path):
-    # The real entry point, real hardening: a locked or undumpable process must still derive the key.
-    code = "import sys; from detssh.cli import run; sys.argv = ['detssh', '--seed', 'x']; run()"
+    # The real entry point, real hardening: a locked or undumpable process must still rate the seed and
+    # derive the key. A subprocess skips conftest, so the seed has to pass the real weak-seed check.
+    seed = "letter begin beyond watch grief tumble"
+    code = f"import sys; from detssh.cli import run; sys.argv = ['detssh', '--seed', {seed!r}]; run()"
     result = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True, env={**os.environ, "HOME": str(tmp_path)}
     )

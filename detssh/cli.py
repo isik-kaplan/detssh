@@ -34,6 +34,7 @@ from detssh.keygen import (
     default_output_path,
 )
 from detssh.ssh_cli import OptionalPort, register_entry, split_destination
+from detssh.strength import confirm_seed_strength
 
 
 DEFAULT_KDF = "argon2id"
@@ -198,6 +199,13 @@ class Generate(
         negatable=False,
         question=NoQuestion(reason="interactive mode always confirms oversized cost knobs itself, once"),
     )
+    accept_weak_seed = Setting(
+        bool,
+        "Flag mode only: use the seed even if it looks weak. Interactive mode warns and asks instead.",
+        default=False,
+        negatable=False,
+        question=NoQuestion(reason="interactive mode asks itself, and only when the seed looks weak"),
+    )
     hash_len = Constant(HASH_LEN, reason="an Ed25519 private key is its 32-byte seed, so the KDF always makes 32")
 
     def check(self):
@@ -229,6 +237,7 @@ def main(settings):
     if salt_error:
         raise click.UsageError(f"{settings.kdf} {salt_error}")
 
+    confirm_seed_strength(settings.seed, settings.label, settings.comment, settings.accept_weak_seed, interactive)
     if not settings.authorize:
         confirm_overwrite(target, settings.overwrite_files)
     create_parent_dirs = confirm_create_parent_dirs(target, settings.create_parent_dirs, interactive)

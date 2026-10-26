@@ -11,6 +11,12 @@ uv run ruff format --check .
 `pyproject.toml`) and fails under 100% line+branch coverage - same gate
 locally and in CI, nothing extra to remember to pass.
 
+Most tests derive from throwaway seeds like `x`, which the weak-seed check
+would stop, so `tests/conftest.py` turns the check off for every test not
+marked `seed_strength`. Mark a test with it (`tests/test_strength.py` marks
+the whole file) to run the real check. A test that runs detssh in a
+subprocess skips conftest, so it needs a seed that passes.
+
 100% coverage means every line runs under test, not that every behavior
 change gets caught - a test can execute a line without asserting anything
 meaningful about it. [`mutmut`](https://mutmut.readthedocs.io/) checks the
@@ -30,7 +36,8 @@ against the mutant) or a genuinely equivalent mutant - the mutated code is
 provably indistinguishable from the original for every input (e.g.
 `"utf-8"` vs `"UTF-8"` as a codec name: Python's codec lookup is
 case-insensitive, so no test could tell them apart). CI
-(`.github/workflows/tests.yml`, job `mutation`) fails on any survivor not
-listed in `tests/mutmut_known_equivalents.txt`, which names each one and
-says why - add a confirmed-equivalent mutant there (never to silence a
-failure without doing that check) rather than chasing an unwinnable test.
+(`.github/workflows/tests.yml`, job `mutation`, which publishing waits on)
+fails on any survivor not listed in `tests/mutmut_known_equivalents.txt`,
+which names each one and says why - add a confirmed-equivalent mutant there
+(never to silence a failure without doing that check) rather than chasing an
+unwinnable test.
