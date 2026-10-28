@@ -386,7 +386,7 @@ wheels = [
 
 [[package]]
 name = "detssh"
-version = "0.10.0"
+version = "0.11.0"
 source = { editable = "." }
 dependencies = [
     { name = "argon2-cffi" },
@@ -413,7 +413,7 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "click", specifier = ">=8.1" },
     { name = "cryptography", specifier = ">=41.0" },
-    { name = "isik", extras = ["cli"], specifier = ">=0.34.0" },
+    { name = "isik", extras = ["cli"], specifier = ">=0.39.0" },
     { name = "questionary", specifier = ">=2.1.1" },
     { name = "zxcvbn", specifier = ">=4.5.0" },
 ]
@@ -499,11 +499,11 @@ wheels = [
 
 [[package]]
 name = "isik"
-version = "0.34.0"
+version = "0.39.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/6a/79/d047a3f3e02396569fe6eca71700ce0a395ceb009963139f1ec0adf99de5/isik-0.34.0.tar.gz", hash = "sha256:c54a3a2b3fa6f397d114190a084315446938192d4df5038fa33cde87e85c92a5", size = 739909, upload-time = "2026-10-25T03:49:52.558Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d0/9f/990564e629a7c72025f527731007466736cf1586b553eabdd0266233a111/isik-0.39.0.tar.gz", hash = "sha256:f6a43de6a552f951ce3d542b85c2d70b2d0167b1e05a2223576e0a47b844969b", size = 961813, upload-time = "2026-10-28T23:15:27.955Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/50/ee/49c8e315b9f9893549d4515eac99873b4c3846e2eb35be0ae79b3f44bda8/isik-0.34.0-py3-none-any.whl", hash = "sha256:442024f6749a83c2bb84a706d7fde499300a8ec0cb2bc00b115755d897e0cd82", size = 281770, upload-time = "2026-10-25T03:49:50.878Z" },
+    { url = "https://files.pythonhosted.org/packages/14/4e/d77cf7a4ae45cc6f75e4a206037fc403ae3c5b20c2be91aae5bdef20e682/isik-0.39.0-py3-none-any.whl", hash = "sha256:03ccfdf6df8ee1a2fb947b24bfc2588dd9be7e67523d9964da77ce1e931e16f1", size = 391818, upload-time = "2026-10-28T23:15:25.679Z" },
 ]
 
 [package.optional-dependencies]

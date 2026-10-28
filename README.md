@@ -8,7 +8,8 @@ uv tool install detssh
 detssh
 ```
 
-`detssh` asks for everything it needs.
+`detssh` asks for everything it needs, and can pick a strong seed for you
+(`detssh seed` prints one on its own).
 
 I name labels `<owner>:<site>:<machine>`, e.g. `isik:home:laptop` or
 `client:cloud:web1`

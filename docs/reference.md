@@ -1,5 +1,9 @@
 # Flag reference
 
+`detssh seed [--words N]` prints a random seed of N words (default 6, 5-20)
+and derives nothing - see [usage](usage.md#generating-a-seed-on-its-own).
+`detssh ssh ...` is covered in [ssh](ssh.md).
+
 Every option of `detssh` itself, besides the [backend options](backends.md).
 Passing any of them except `--authorize`, `--authorized-keys`, `--overwrite-files`
 and `--create-parent-dirs` switches to flag mode.

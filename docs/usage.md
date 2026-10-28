@@ -10,6 +10,32 @@ same place `ssh-keygen` would: `~/.ssh/id_ed25519` / `~/.ssh/id_ed25519.pub`
 (mode 600/700, `~/.ssh` created if missing). Pass `--output` to write
 somewhere else instead.
 
+The seed comes first after the KDF choices, two ways:
+
+- **Type my own**: hidden as you type, with a meter above it that redraws
+  on every keystroke - `[█████░░░░░] 5/10 · ~52 bits`, a point per 10 bits
+  of the [weak-seed check](security.md#the-weak-seed-check)'s estimate,
+  red below the 5 it accepts without asking. Then it's asked once more to
+  confirm.
+- **Generate random words**: detssh picks 6 words (or as many as you ask
+  for, 5-20) from the EFF large wordlist with Python's `secrets`, shows them
+  with what they're worth (~78 bits for 6), and has you type them back to
+  show you wrote them down. Once they match, they're erased from the
+  screen. The seed is the words, one space between each.
+
+Without a terminal (input piped in), the seed is a plain hidden prompt,
+asked twice.
+
+## Generating a seed on its own
+
+```
+detssh seed              # 6 words
+detssh seed --words 7
+```
+Prints a random seed and derives nothing, so you can write it down before
+running `detssh`. Only the words go to stdout (`detssh seed | pbcopy`); the
+estimate and a reminder go to stderr.
+
 ## Flag mode
 
 ```

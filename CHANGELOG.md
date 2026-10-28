@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-28
+
+### Added
+
+- Interactive mode asks how you want the seed: type your own, with a
+  strength meter that redraws as you type (`[█████░░░░░] 5/10 · ~52 bits`,
+  red below what the weak-seed check accepts), or have detssh generate
+  random words and type them back to show you saved them, after which
+  they're erased from the screen. Without a terminal it's the hidden,
+  confirmed prompt as before.
+- `detssh seed [--words N]`: prints a seed of N random words (default 6,
+  5-20) from the EFF large wordlist, picked with `secrets`, and derives
+  nothing. The wordlist ships with detssh, byte for byte as the EFF
+  publishes it (CC BY 3.0 US).
+
+### Changed
+
+- Needs `isik[cli]>=0.39.0`, whose `prompt=` lets the seed question be
+  asked by detssh. isik 0.38.0's pytest plugin broke any project without
+  Django; 0.39.0 fixes that.
+
 ## [0.10.0] - 2026-10-26
 
 ### Added

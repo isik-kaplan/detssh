@@ -26,8 +26,8 @@ detssh.registry.x_save_registry__mutmut_12
 # run()'s else-branch computes `argv = sys.argv[1:]` and passes `args=argv` unmodified -
 # click.BaseCommand.main() already defaults args=None to sys.argv[1:] itself, so passing
 # that exact value explicitly or omitting it (args=None) are the same call.
-detssh.cli.x_run__mutmut_14
-detssh.cli.x_run__mutmut_16
+detssh.cli.x_run__mutmut_25
+detssh.cli.x_run__mutmut_27
 
 # write_hosts_file's os.open(..., mode=HOSTS_FILE_MODE) is immediately followed by an
 # unconditional os.fchmod(fd, HOSTS_FILE_MODE) - whatever mode os.open used gets
@@ -72,3 +72,7 @@ detssh.cli.x__register_interactively__mutmut_33
 # matches lines ending in "survived", so it doesn't need listing here, but is noted for
 # anyone diffing this file against a fresh `mutmut results`.
 # detssh.cli.x__register_interactively__mutmut_14: timeout
+
+# ask_generated() starts with `missed = False` and only ever tests it with `if missed:` (in
+# type_back_message), so starting from None - just as falsy - asks exactly the same questions.
+detssh.seed_prompt.x_ask_generated__mutmut_18

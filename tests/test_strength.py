@@ -3,7 +3,17 @@ import pytest
 from click.testing import CliRunner
 
 from detssh.cli import main
-from detssh.strength import WEAK_SEED_BITS, ZXCVBN_MAX_LENGTH, _known_words, confirm_seed_strength, seed_bits
+from detssh.strength import (
+    BITS_PER_POINT,
+    MAX_SCORE,
+    WEAK_SEED_BITS,
+    ZXCVBN_MAX_LENGTH,
+    _known_words,
+    confirm_seed_strength,
+    meter,
+    score,
+    seed_bits,
+)
 
 
 pytestmark = pytest.mark.seed_strength
@@ -186,3 +196,21 @@ def test_a_full_interactive_run_can_decline_a_weak_seed(monkeypatch, tmp_path):
     assert "Warning: The seed looks weak" in result.output
     assert "Deriving key" not in result.output
     assert not (tmp_path / "key").exists()
+
+
+@pytest.mark.parametrize(
+    ("bits", "points"), [(0, 1), (19.9, 1), (20, 2), (49.9, 4), (50, 5), (99.9, 9), (100, 10), (300, 10)]
+)
+def test_score_is_a_point_per_ten_bits_from_one_to_ten(bits, points):
+    assert score(bits) == points
+
+
+def test_the_weak_cutoff_falls_between_two_scores():
+    assert WEAK_SEED_BITS % BITS_PER_POINT == 0
+    assert score(WEAK_SEED_BITS - 0.01) < score(WEAK_SEED_BITS)
+
+
+def test_the_meter_draws_the_score_and_the_estimate():
+    assert meter(52.4) == "[█████░░░░░] 5/10 · ~52 bits"
+    assert meter(0) == f"[█{'░' * (MAX_SCORE - 1)}] 1/10 · ~0 bits"
+    assert meter(120) == "[██████████] 10/10 · ~120 bits"

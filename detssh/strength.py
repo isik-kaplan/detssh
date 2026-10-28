@@ -19,6 +19,8 @@ from zxcvbn import zxcvbn
 # 2^50, along with famous quotes and anything built on a common password.
 WEAK_SEED_BITS = 50
 SECURITY_DOCS = "https://github.com/isik-kaplan/detssh/blob/master/docs/security.md#how-strong-the-seed-should-be"
+MAX_SCORE = 10
+BITS_PER_POINT = 10
 # zxcvbn rates each separator as a random character, so "may the force be with you" would pass
 # where "maytheforcebewithyou" doesn't. Guessers try the usual separators anyway: rate without them.
 SEPARATORS = re.compile(r"[\s\-_.,]+")
@@ -32,6 +34,17 @@ def seed_bits(seed, user_inputs=()):
     strings an attacker knows - the label, the comment - so a seed built from them rates low."""
     rated = SEPARATORS.sub("", seed)[:ZXCVBN_MAX_LENGTH]
     return math.log2(zxcvbn(rated, user_inputs=list(user_inputs))["guesses"])
+
+
+def score(bits):
+    """1-10, a point per 10 bits: the weak cutoff falls between 4 and 5, and 10 is 100 bits."""
+    return max(1, min(MAX_SCORE, math.floor(bits / BITS_PER_POINT)))
+
+
+def meter(bits):
+    """`[█████░░░░░] 5/10 · ~52 bits` - what the seed prompt shows as you type."""
+    points = score(bits)
+    return f"[{'█' * points}{'░' * (MAX_SCORE - points)}] {points}/{MAX_SCORE} · ~{bits:.0f} bits"
 
 
 def _known_words(label, comment):

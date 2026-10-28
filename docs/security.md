@@ -28,9 +28,10 @@ been:
 
 These are orders of magnitude, and hardware only gets cheaper, so leave
 headroom. Use at least 5 words, 6 for a seed that guards anything that
-matters, picked with dice (or a password manager's passphrase generator)
-from a list like the [EFF large wordlist](https://www.eff.org/dice), where
-each word adds about 13 bits. Words you choose yourself aren't random, even
+matters, picked with dice, `detssh seed`, or a password manager's
+passphrase generator from a list like the
+[EFF large wordlist](https://www.eff.org/dice), where each word adds about
+13 bits. Words you choose yourself aren't random, even
 when they feel like it.
 
 The 2^65 is a promise about the dice, not about every roll: dice can land
@@ -97,6 +98,12 @@ own, so it has no idea when words belong together: it rates the
 self-written sentences above around 2^90-2^115, far above what they're
 worth. Passing the check means the seed isn't obviously weak, not that it's
 strong.
+
+The meter on the interactive seed prompt shows the same estimate as you
+type, a point per 10 bits: 4/10 and under is what the check stops, 5/10 is
+the least it accepts. A seed from `detssh seed` or the wizard's "Generate
+random words" doesn't need it - its strength is exact - and rates well above
+the cutoff anyway (5 words never came in under 2^53 in 3000 tries).
 
 ## What's public
 

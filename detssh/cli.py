@@ -33,6 +33,7 @@ from detssh.keygen import (
     default_authorized_keys_path,
     default_output_path,
 )
+from detssh.seed_prompt import ask_seed
 from detssh.ssh_cli import OptionalPort, register_entry, split_destination
 from detssh.strength import confirm_seed_strength
 
@@ -112,7 +113,7 @@ class Generate(
         {name: algo.settings for name, algo in salt.ALGOS.items()},
         default=DEFAULT_SALT_ALGO,
     )
-    seed = Setting(str, "Seed passphrase", secret=True, confirm=True, required=True)
+    seed = Setting(str, "Seed passphrase", secret=True, confirm=True, required=True, prompt=ask_seed)
     label = Setting(str, "Label", default="")
     kdf_settings = kdf.settings
     salt_settings = salt_algo.settings
@@ -281,12 +282,18 @@ def main(settings):
 
 def run():
     """Console-script entry point: `detssh ssh ...` dispatches to the ssh_config
-    registry commands, everything else runs the keygen wizard as before."""
+    registry commands, `detssh seed` generates a seed, everything else runs the keygen
+    wizard as before."""
     argv = sys.argv[1:]
     if argv[:1] == ["ssh"]:
         from detssh.ssh_cli import ssh
 
         ssh(args=argv[1:], prog_name="detssh ssh")
+    elif argv[:1] == ["seed"]:
+        from detssh.diceware import seed
+
+        harden()
+        seed(args=argv[1:], prog_name="detssh seed")
     else:
         harden()
         main(args=argv, prog_name="detssh")
