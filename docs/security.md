@@ -141,6 +141,16 @@ new cloud VM, the provider's "SSH keys" field does this for you.
 
 ## What detssh does about leaks
 
+Nothing you type for the seed or the key file's passphrase shows on screen,
+not even a `*` per character, which would give away the length. Generated
+words have to be shown so you can write them down; they're erased from the
+screen once you've typed them back, but a terminal that logs its output,
+a screen recording, or a window too short to hold them (so they scroll into
+scrollback) keeps them. Type each secret only once its prompt is up: what
+you type before is echoed by the terminal itself, like for any program. In
+flag mode, `--seed` and `--key-passphrase` end up in your shell history and
+in what other users see in `ps`; leave them out and detssh asks for them.
+
 Before asking for the seed, detssh hardens its own process, best-effort:
 
 - Core dumps are off, so a crash can't write the seed to disk.

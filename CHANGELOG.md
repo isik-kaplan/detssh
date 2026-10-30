@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-30
+
+### Changed
+
+- The seed prompts show nothing as you type: no `*` per character for your
+  own seed and its confirmation, and generated words are typed back hidden
+  too, like the key file's passphrase already was.
+- docs/security.md says what does and doesn't show on screen, and what can
+  still keep a secret: terminal logs, scrollback, typing before a prompt is
+  up, and secrets passed as flags.
+
 ## [0.11.0] - 2026-10-28
 
 ### Added

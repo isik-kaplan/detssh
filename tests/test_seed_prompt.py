@@ -1,15 +1,19 @@
+import io
+
 import click
 import pytest
 from prompt_toolkit.application import create_app_session
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.output.vt100 import Vt100_Output
 
 from detssh import seed_prompt
 from detssh.seed_prompt import (
     GENERATE,
+    HIDE_INPUT,
     STYLE,
     TYPE_OWN,
-    _erasing_prompt,
     _hidden,
     _typed_so_far,
     ask_generated,
@@ -24,9 +28,11 @@ class Replies:
     def __init__(self, *replies):
         self.replies = list(replies)
         self.messages = []
+        self.keywords = []
 
     def __call__(self, message, **keywords):
         self.messages.append(message)
+        self.keywords.append(keywords)
         reply = self.replies.pop(0)
         if isinstance(reply, BaseException):
             raise reply
@@ -155,32 +161,64 @@ def test_own_seed_asks_again_when_empty_or_not_confirmed(monkeypatch, capsys):
     ]
 
 
-def test_the_hidden_prompt_hides_the_input_and_colors_the_meter(monkeypatch):
-    calls = []
-    monkeypatch.setattr(seed_prompt, "toolkit_prompt", lambda *args, **keywords: calls.append((args, keywords)) or "s")
-
-    assert _hidden("Seed: ") == "s"
-    assert calls == [(("Seed: ",), {"is_password": True, "style": STYLE})]
-
-
-def test_the_erasing_prompt_asks_with_the_message_and_style(monkeypatch):
-    calls = []
-
+def _session(calls, reply="typed"):
     def session(**keywords):
         calls.append(keywords)
-        return type("Session", (), {"prompt": lambda self, message, style: calls.append((message, style)) or "typed"})()
 
-    monkeypatch.setattr(seed_prompt, "PromptSession", session)
+        def prompt(self, message, **keywords):
+            calls.append((message, keywords))
+            if isinstance(reply, BaseException):
+                raise reply
+            return reply
 
-    assert _erasing_prompt("type: ") == "typed"
-    assert calls == [{"erase_when_done": True}, ("type: ", STYLE)]
+        return type("Session", (), {"prompt": prompt})()
+
+    return session
+
+
+@pytest.mark.parametrize("erase", [False, True])
+def test_the_hidden_prompt_hides_the_input_and_colors_the_meter(monkeypatch, erase):
+    calls = []
+    monkeypatch.setattr(seed_prompt, "PromptSession", _session(calls))
+
+    assert _hidden("Seed: ", erase=erase) == "typed"
+    assert calls == [{"erase_when_done": erase}, ("Seed: ", {"input_processors": [HIDE_INPUT], "style": STYLE})]
+
+
+def test_the_hidden_prompt_stays_on_screen_unless_asked_to_erase(monkeypatch):
+    calls = []
+    monkeypatch.setattr(seed_prompt, "PromptSession", _session(calls))
+
+    _hidden("Seed: ")
+
+    assert calls[0] == {"erase_when_done": False}
+
+
+def test_hiding_shows_nothing_for_each_character():
+    assert HIDE_INPUT.char == ""
 
 
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), EOFError()])
-def test_ctrl_c_or_ctrl_d_while_typing_aborts(monkeypatch, interrupt):
-    monkeypatch.setattr(seed_prompt, "toolkit_prompt", Replies(interrupt))
+@pytest.mark.parametrize("erase", [False, True])
+def test_ctrl_c_or_ctrl_d_while_typing_aborts(monkeypatch, interrupt, erase):
+    monkeypatch.setattr(seed_prompt, "PromptSession", _session([], reply=interrupt))
     with pytest.raises(click.Abort):
-        _hidden("Seed passphrase")
+        _hidden("Seed passphrase", erase=erase)
+
+
+@pytest.mark.parametrize("erase", [False, True])
+def test_the_hidden_prompt_draws_neither_what_is_typed_nor_stars(erase):
+    screen = io.StringIO()
+    output = Vt100_Output(screen, lambda: Size(rows=24, columns=80))
+    with create_pipe_input() as pipe, create_app_session(input=pipe, output=output):
+        pipe.send_text("plaza cobweb\r")
+        assert _hidden("Type them back: ", erase=erase) == "plaza cobweb"
+
+    drawn = screen.getvalue()
+    assert "Type them back:" in drawn
+    assert "plaza" not in drawn
+    assert "cobweb" not in drawn
+    assert "*" not in drawn
 
 
 def test_the_hidden_prompt_redraws_its_message_with_each_keystroke():
@@ -195,17 +233,18 @@ def test_the_hidden_prompt_redraws_its_message_with_each_keystroke():
     assert seen[-1] == "abc"
 
 
-def test_generated_words_are_typed_back_in_a_prompt_that_erases_itself(monkeypatch, capsys):
+def test_generated_words_are_typed_back_hidden_in_a_prompt_that_erases_itself(monkeypatch, capsys):
     monkeypatch.setattr(click, "prompt", lambda message, **keywords: 5)
     monkeypatch.setattr(seed_prompt, "generate", lambda count: ["plaza", "cobweb", "untried", "mutt", "repave"])
     typed = Replies("plaza cobweb", "  Plaza  COBWEB untried mutt repave ")
-    monkeypatch.setattr(seed_prompt, "_erasing_prompt", typed)
+    monkeypatch.setattr(seed_prompt, "_hidden", typed)
 
     assert ask_generated() == "plaza cobweb untried mutt repave"
     assert typed.messages == [
         type_back_message("plaza cobweb untried mutt repave", 5, missed=False),
         type_back_message("plaza cobweb untried mutt repave", 5, missed=True),
     ]
+    assert typed.keywords == [{"erase": True}, {"erase": True}]
     assert capsys.readouterr().out == "Seed confirmed: 5 words, ~65 bits.\n"
 
 
@@ -227,30 +266,9 @@ def test_the_type_back_message_shows_the_words_bold_and_any_miss():
     ]
 
 
-def test_the_erasing_prompt_is_a_real_session_that_erases_when_done():
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text("plaza cobweb\r")
-        assert _erasing_prompt([("bold", "plaza"), ("", " type: ")]) == "plaza cobweb"
-
-
-@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), EOFError()])
-def test_ctrl_c_at_the_erasing_prompt_aborts(monkeypatch, interrupt):
-    def session(**keywords):
-        assert keywords == {"erase_when_done": True}
-
-        def prompt(self, message, style):
-            raise interrupt
-
-        return type("Session", (), {"prompt": prompt})()
-
-    monkeypatch.setattr(seed_prompt, "PromptSession", session)
-    with pytest.raises(click.Abort):
-        _erasing_prompt("type: ")
-
-
 def test_ctrl_c_while_typing_the_words_back_aborts(monkeypatch):
     monkeypatch.setattr(click, "prompt", lambda message, **keywords: 5)
-    monkeypatch.setattr(seed_prompt, "_erasing_prompt", Replies(click.Abort()))
+    monkeypatch.setattr(seed_prompt, "_hidden", Replies(click.Abort()))
     with pytest.raises(click.Abort):
         ask_generated()
 
@@ -258,7 +276,7 @@ def test_ctrl_c_while_typing_the_words_back_aborts(monkeypatch):
 def test_the_word_count_question_offers_six_and_takes_five_to_twenty(monkeypatch):
     asked = []
     monkeypatch.setattr(click, "prompt", lambda message, **keywords: asked.append((message, keywords)) or 6)
-    monkeypatch.setattr(seed_prompt, "_erasing_prompt", Replies(click.Abort()))
+    monkeypatch.setattr(seed_prompt, "_hidden", Replies(click.Abort()))
 
     with pytest.raises(click.Abort):
         ask_generated()

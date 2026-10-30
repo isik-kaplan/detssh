@@ -3,7 +3,8 @@ you type, or have detssh generate random words and type them back to show you sa
 
 isik asks every other question; this one is the seed Setting's `prompt=`, so isik still
 decides when it's asked and checks the answer. Hiding the passphrase and asking for it twice
-are this module's job, since it replaces isik's own prompt.
+are this module's job, since it replaces isik's own prompt. Nothing typed shows - no `*`
+either - like isik's other secret questions.
 """
 
 import sys
@@ -11,8 +12,8 @@ import sys
 import click
 import questionary
 from prompt_toolkit import PromptSession
-from prompt_toolkit import prompt as toolkit_prompt
 from prompt_toolkit.application.current import get_app
+from prompt_toolkit.layout.processors import PasswordProcessor
 from prompt_toolkit.styles import Style
 
 from detssh.diceware import BITS_PER_WORD, DEFAULT_WORDS, MAX_WORDS, MIN_WORDS, generate, seed_from, strength_line
@@ -24,12 +25,15 @@ GENERATE = "Generate random words"
 # Green from here up: about what 6 random words rate, the most docs/security.md asks for.
 GOOD_SEED_BITS = 70
 STYLE = Style.from_dict({"weak": "fg:ansired", "fair": "fg:ansiyellow", "good": "fg:ansigreen", "hint": "fg:ansigray"})
+# Nothing for each typed character, not even prompt_toolkit's `*`, which would show the length.
+HIDE_INPUT = PasswordProcessor(char="")
 
 
-def _hidden(message):
-    """One hidden line, `message` redrawn on every keystroke when it's a function."""
+def _hidden(message, erase=False):
+    """One line that shows nothing as it's typed, `message` redrawn on every keystroke when it's a
+    function. With `erase`, the line and its message are erased from the screen once answered."""
     try:
-        return toolkit_prompt(message, is_password=True, style=STYLE)
+        return PromptSession(erase_when_done=erase).prompt(message, input_processors=[HIDE_INPUT], style=STYLE)
     except (KeyboardInterrupt, EOFError):
         raise click.Abort() from None
 
@@ -81,21 +85,13 @@ def type_back_message(seed, count, missed):
     return message
 
 
-def _erasing_prompt(message):
-    """One visible line, erased from the screen with its message once it's answered."""
-    try:
-        return PromptSession(erase_when_done=True).prompt(message, style=STYLE)
-    except (KeyboardInterrupt, EOFError):
-        raise click.Abort() from None
-
-
 def ask_generated():
     count = click.prompt("How many words?", default=DEFAULT_WORDS, type=click.IntRange(MIN_WORDS, MAX_WORDS))
     seed = seed_from(generate(count))
     missed = False
     while True:
         # Erased once answered, so the words don't stay on the screen.
-        typed = _erasing_prompt(type_back_message(seed, count, missed))
+        typed = _hidden(type_back_message(seed, count, missed), erase=True)
         if " ".join(typed.lower().split()) == seed:
             click.echo(f"Seed confirmed: {count} words, ~{count * BITS_PER_WORD:.0f} bits.")
             return seed
