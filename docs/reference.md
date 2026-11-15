@@ -1,12 +1,13 @@
 # Flag reference
 
-`detssh seed [--words N]` prints a random seed of N words (default 6, 5-20)
-and derives nothing - see [usage](usage.md#generating-a-seed-on-its-own).
+`detssh seed [--words N] [--pretty]` prints a random seed of N words
+(default 6, 5-20) and derives nothing - see
+[usage](usage.md#generating-a-seed-on-its-own).
 `detssh ssh ...` is covered in [ssh](ssh.md).
 
 Every option of `detssh` itself, besides the [backend options](backends.md).
-Passing any of them except `--authorize`, `--authorized-keys`, `--overwrite-files`
-and `--create-parent-dirs` switches to flag mode.
+Passing any of them except `--authorize`, `--authorized-keys`, `--overwrite-files`,
+`--create-parent-dirs` and `--pretty` switches to flag mode.
 
 | Flag | Default | What it does |
 |---|---|---|
@@ -25,6 +26,7 @@ and `--create-parent-dirs` switches to flag mode.
 | `--register-port` | 22 | Port for `--register`. |
 | `--force-allow-soft-constraints` | off | Allow cost options above their soft max in flag mode. |
 | `--accept-weak-seed` | off | Use a seed that [looks weak](security.md#the-weak-seed-check) in flag mode. Interactive mode asks instead. |
+| `--pretty` | off | Show the files written and the settings to recreate the key as tables. Works in both modes. |
 | `-h`, `--help` | | Help for the chosen `--kdf` / `--salt-algo`. |
 
 `--authorize` can't be combined with `--output`, `--key-passphrase`,
@@ -35,5 +37,5 @@ and `--create-parent-dirs` switches to flag mode.
 | Command | What it does |
 |---|---|
 | `detssh ssh register LABEL USER@HOST --key FILE [--port PORT]` | Make `ssh LABEL` connect to `USER@HOST` with that key. `--key` is required. |
-| `detssh ssh list` | Show registered labels. |
+| `detssh ssh list [--pretty]` | Show registered labels, as a table with `--pretty`. |
 | `detssh ssh forget LABEL` | Remove a label. Never deletes the key file. |

@@ -32,10 +32,17 @@ asked twice.
 ```
 detssh seed              # 6 words
 detssh seed --words 7
+detssh seed --pretty     # the words in a grid
 ```
 Prints a random seed and derives nothing, so you can write it down before
 running `detssh`. Only the words go to stdout (`detssh seed | pbcopy`); the
-estimate and a reminder go to stderr.
+estimate and a reminder go to stderr. `--pretty` puts the words in a grid
+instead, as many to a row as fit the terminal, to copy down one at a
+time; the seed is still the words in order, left to right, one
+space between each.
+
+Add `--pretty` to `detssh` (in either mode) or `detssh ssh list` too, to see
+their output as tables.
 
 ## Flag mode
 

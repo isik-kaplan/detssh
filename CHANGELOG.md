@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-15
+
+### Added
+
+- `--pretty` shows output as tables, with a heavy rule under the header
+  and light ones between rows: the files written and the settings to
+  recreate the key (`detssh`, in both modes) and registered labels
+  (`detssh ssh list`). `detssh seed --pretty` puts the words left to right
+  in a grid as wide as the terminal allows, any cells the last row
+  doesn't fill left empty, for copying down; plain mode still prints just
+  the words, for piping.
+
+### Changed
+
+- Depends on `wcwidth` directly (already installed through prompt_toolkit),
+  so tables line up around wide characters like 日 or 한.
+- docs/labels.md says outright that a label names the machine you log into,
+  not where the private key is kept, names providers (`hetzner`) instead of
+  `cloud` in the examples, and covers one key used everywhere
+  (`<owner>:global:<name>`).
+
 ## [0.12.0] - 2026-10-30
 
 ### Changed

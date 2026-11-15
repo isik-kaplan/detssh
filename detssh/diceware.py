@@ -8,10 +8,13 @@ bits a word from the EFF large wordlist's 7776 (docs/security.md). Words come fr
 
 import math
 import secrets
+import shutil
 from functools import cache
 from importlib.resources import files
 
 import click
+
+from detssh.table import words_box
 
 
 WORDLIST = "wordlists/eff_large_wordlist.txt"
@@ -52,13 +55,21 @@ def strength_line(count):
     show_default=True,
     help="How many words.",
 )
-def seed(words):
+@click.option("--pretty", is_flag=True, help="Show the words in a grid, to copy down one by one.")
+def seed(words, pretty):
     """Print a random seed to use with detssh: words from the EFF large wordlist, picked with
     Python's `secrets`. Derives nothing, so you can write it down first.
 
     The seed is the words exactly as printed, one space between each. Only the words go to
-    stdout, so `detssh seed | pbcopy` copies just the seed.
+    stdout, so `detssh seed | pbcopy` copies just the seed - unless --pretty puts them in a
+    grid, which is for reading, not copying.
     """
-    click.echo(seed_from(generate(words)))
+    picked = generate(words)
+    if pretty:
+        for line in words_box(picked, shutil.get_terminal_size().columns):
+            click.echo(line)
+        click.echo("The seed is these words in order, left to right, one space between each.", err=True)
+    else:
+        click.echo(seed_from(picked))
     click.echo(strength_line(words), err=True)
     click.echo("Write it down: it's the only way to get your keys back. Run again for a different one.", err=True)

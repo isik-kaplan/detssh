@@ -143,10 +143,11 @@ def test_authorize_outside_ssh_dir_needs_create_parent_dirs(monkeypatch, tmp_pat
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
 
 
-def _invoke_recap(path):
+def _invoke_recap(path, pretty=False):
     @click.command()
     def cmd():
-        authorize_and_recap(SEED, path, "c", recap=(("kdf", "pbkdf2"),))
+        extra = {"pretty": True} if pretty else {}  # left out, it must default to plain
+        authorize_and_recap(SEED, path, "c", recap=(("kdf", "pbkdf2"),), **extra)
 
     return CliRunner().invoke(cmd)
 
@@ -392,3 +393,19 @@ def test_interactive_authorized_keys_prompt_rejects_a_directory(monkeypatch, tmp
     assert result.exit_code == 0, result.output
     assert "is a directory" in result.output
     assert path.exists()
+
+
+def test_pretty_authorize_and_recap_shows_the_recap_as_a_table(tmp_path):
+    result = _invoke_recap(tmp_path / "authorized_keys", pretty=True)
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[-8:] == [
+        "To recreate this exact key, remember your passphrase (keep it secret) plus:",
+        "┌───────────┬─────────┐",
+        "│ setting   │ value   │",
+        "┝━━━━━━━━━━━┿━━━━━━━━━┥",
+        "│ kdf       │ pbkdf2  │",
+        "├───────────┼─────────┤",
+        "│ algorithm │ ed25519 │",
+        "└───────────┴─────────┘",
+    ]

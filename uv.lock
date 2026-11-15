@@ -386,7 +386,7 @@ wheels = [
 
 [[package]]
 name = "detssh"
-version = "0.12.0"
+version = "0.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "argon2-cffi" },
@@ -395,6 +395,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "isik", extra = ["cli"] },
     { name = "questionary" },
+    { name = "wcwidth" },
     { name = "zxcvbn" },
 ]
 
@@ -415,6 +416,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=41.0" },
     { name = "isik", extras = ["cli"], specifier = ">=0.39.0" },
     { name = "questionary", specifier = ">=2.1.1" },
+    { name = "wcwidth", specifier = ">=0.2.13" },
     { name = "zxcvbn", specifier = ">=4.5.0" },
 ]
 

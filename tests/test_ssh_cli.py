@@ -126,6 +126,38 @@ def test_list_shows_registered_labels(monkeypatch, tmp_path):
     assert "root@example.com" in result.output
 
 
+def test_pretty_list_shows_the_labels_as_a_table(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    key_path = _key(tmp_path)
+    runner = CliRunner()
+    runner.invoke(ssh, ["register", "isik:hetzner:web", "root@example.com", "--key", str(key_path)])
+    runner.invoke(ssh, ["register", "a", "me@b.org", "--key", str(key_path), "--port", "2222"])
+
+    result = runner.invoke(ssh, ["list", "--pretty"])
+
+    assert result.exit_code == 0, result.output
+    key = str(key_path)
+    pad = " " * (len(key) - 3)
+    assert result.output.splitlines() == [
+        f"┌──────────────────┬──────────────────┬─{'─' * len(key)}─┐",
+        f"│ label            │ destination      │ key{pad} │",
+        f"┝━━━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━┿━{'━' * len(key)}━┥",
+        f"│ a                │ me@b.org:2222    │ {key} │",
+        f"├──────────────────┼──────────────────┼─{'─' * len(key)}─┤",
+        f"│ isik:hetzner:web │ root@example.com │ {key} │",
+        f"└──────────────────┴──────────────────┴─{'─' * len(key)}─┘",
+    ]
+
+
+def test_pretty_list_with_no_labels_says_so_without_a_table(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+
+    result = CliRunner().invoke(ssh, ["list", "--pretty"])
+
+    assert result.output == "No labels registered. See `detssh ssh register --help`.\n"
+
+
 def test_forget_removes_a_registered_label(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))

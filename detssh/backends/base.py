@@ -11,6 +11,7 @@ from detssh.keygen import (
     ssh_dir,
     write_keypair,
 )
+from detssh.table import box
 
 
 def _display_path(path):
@@ -73,7 +74,9 @@ def confirm_create_parent_dirs(output, create_parent_dirs, interactive):
     return True
 
 
-def write_keypair_and_recap(seed_bytes, output, comment, recap, key_passphrase="", create_parent_dirs=False):
+def write_keypair_and_recap(
+    seed_bytes, output, comment, recap, key_passphrase="", create_parent_dirs=False, pretty=False
+):
     private_key, public_key = keypair_from_seed(seed_bytes)
     try:
         priv_path, pub_path = write_keypair(
@@ -89,15 +92,20 @@ def write_keypair_and_recap(seed_bytes, output, comment, recap, key_passphrase="
     except ValueError as e:
         raise click.UsageError(str(e)) from e
 
-    click.echo(f"Wrote private key: {priv_path}{' (encrypted)' if key_passphrase else ''}")
-    click.echo(f"Wrote public key:  {pub_path}")
+    encrypted = " (encrypted)" if key_passphrase else ""
+    if pretty:
+        written = [("private key", f"{priv_path}{encrypted}"), ("public key", pub_path)]
+        echo_lines(box(written, headers=("wrote", "path")))
+    else:
+        click.echo(f"Wrote private key: {priv_path}{encrypted}")
+        click.echo(f"Wrote public key:  {pub_path}")
 
-    echo_recap(recap)
+    echo_recap(recap, pretty=pretty)
 
     return priv_path, pub_path
 
 
-def authorize_and_recap(seed_bytes, authorized_keys, comment, recap, create_parent_dirs=False):
+def authorize_and_recap(seed_bytes, authorized_keys, comment, recap, create_parent_dirs=False, pretty=False):
     _, public_key = keypair_from_seed(seed_bytes)
     try:
         added = authorize_public_key(
@@ -112,11 +120,20 @@ def authorize_and_recap(seed_bytes, authorized_keys, comment, recap, create_pare
         click.echo(f"Public key already in {authorized_keys}, left it unchanged:")
     click.echo(f"  {public_key_line(public_key, comment).decode('utf-8').rstrip()}")
 
-    echo_recap(recap)
+    echo_recap(recap, pretty=pretty)
 
 
-def echo_recap(recap):
+def echo_lines(lines):
+    for line in lines:
+        click.echo(line)
+
+
+def echo_recap(recap, pretty):
     click.echo()
     click.echo("To recreate this exact key, remember your passphrase (keep it secret) plus:")
-    for name, value in (*recap, ("algorithm", "ed25519")):
+    rows = (*recap, ("algorithm", "ed25519"))
+    if pretty:
+        echo_lines(box(rows, headers=("setting", "value")))
+        return
+    for name, value in rows:
         click.echo(f"  {name:<18} {value}")

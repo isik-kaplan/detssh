@@ -4,6 +4,7 @@ import click
 
 from detssh.registry import Entry, RegistryError, load_registry, save_registry
 from detssh.ssh_config import ensure_include, hosts_file_path, ssh_config_path, write_hosts_file
+from detssh.table import box
 
 
 MIN_PORT = 1
@@ -95,15 +96,23 @@ def register(label, destination, key, port):
 
 
 @ssh.command(name="list")
-def list_labels():
+@click.option("--pretty", is_flag=True, help="Show the labels as a table.")
+def list_labels(pretty):
     """List registered labels."""
     entries = _load_or_die()
     if not entries:
         click.echo("No labels registered. See `detssh ssh register --help`.")
         return
-    for label, entry in sorted(entries.items()):
-        destination = f"{entry.user}@{entry.host}" + (f":{entry.port}" if entry.port else "")
-        click.echo(f"{label:<24} {destination:<32} {entry.key}")
+    rows = [
+        (label, f"{entry.user}@{entry.host}" + (f":{entry.port}" if entry.port else ""), entry.key)
+        for label, entry in sorted(entries.items())
+    ]
+    if pretty:
+        for line in box(rows, headers=("label", "destination", "key")):
+            click.echo(line)
+        return
+    for label, destination, key in rows:
+        click.echo(f"{label:<24} {destination:<32} {key}")
 
 
 @ssh.command()

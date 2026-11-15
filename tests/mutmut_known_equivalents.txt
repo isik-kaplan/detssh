@@ -46,7 +46,7 @@ detssh.keygen.x_write_keypair__mutmut_43
 # case, which cannot change what the code does.
 detssh.keygen.x_write_keypair__mutmut_29
 detssh.keygen.x_public_key_line__mutmut_20
-detssh.backends.base.x_authorize_and_recap__mutmut_25
+detssh.backends.base.x_authorize_and_recap__mutmut_26
 detssh.backends.kdf.scrypt.xǁScryptǁrun__mutmut_35
 detssh.backends.kdf.bcrypt_pbkdf.xǁBcryptPbkdfǁrun__mutmut_13
 detssh.backends.kdf.pbkdf2.xǁPbkdf2ǁrun__mutmut_12
@@ -76,3 +76,8 @@ detssh.cli.x__register_interactively__mutmut_33
 # ask_generated() starts with `missed = False` and only ever tests it with `if missed:` (in
 # type_back_message), so starting from None - just as falsy - asks exactly the same questions.
 detssh.seed_prompt.x_ask_generated__mutmut_18
+
+# box() refuses ragged rows before zipping, so zip's strict= never matters.
+detssh.table.x_box__mutmut_34
+detssh.table.x_box__mutmut_37
+detssh.table.x_box__mutmut_38

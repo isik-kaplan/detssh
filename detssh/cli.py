@@ -207,6 +207,13 @@ class Generate(
         negatable=False,
         question=NoQuestion(reason="interactive mode asks itself, and only when the seed looks weak"),
     )
+    pretty = Setting(
+        bool,
+        "Show what was written and the settings to recreate the key as tables.",
+        default=False,
+        negatable=False,
+        question=NoQuestion(reason="it only changes how the output looks, so it's a flag in both modes"),
+    )
     hash_len = Constant(HASH_LEN, reason="an Ed25519 private key is its 32-byte seed, so the KDF always makes 32")
 
     def check(self):
@@ -218,7 +225,9 @@ class Generate(
 
 @options(
     Generate,
-    interactive=no_option_given(ignoring=["authorize", "authorized_keys", "overwrite_files", "create_parent_dirs"]),
+    interactive=no_option_given(
+        ignoring=["authorize", "authorized_keys", "overwrite_files", "create_parent_dirs", "pretty"]
+    ),
     help=HelpFormat(default_on_own_line=True, first_column_max=30),
     epilog=lambda selection: _help_note(kdf.BACKENDS[selection["kdf"]], salt.ALGOS[selection["salt_algo"]]),
 )
@@ -260,7 +269,14 @@ def main(settings):
     )
 
     if settings.authorize:
-        authorize_and_recap(seed_bytes, target, settings.comment, recap, create_parent_dirs=create_parent_dirs)
+        authorize_and_recap(
+            seed_bytes,
+            target,
+            settings.comment,
+            recap,
+            create_parent_dirs=create_parent_dirs,
+            pretty=settings.pretty,
+        )
         return
 
     priv_path, _ = write_keypair_and_recap(
@@ -270,6 +286,7 @@ def main(settings):
         recap=recap,
         key_passphrase=settings.key_passphrase,
         create_parent_dirs=create_parent_dirs,
+        pretty=settings.pretty,
     )
 
     click.echo()

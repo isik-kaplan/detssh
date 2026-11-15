@@ -808,7 +808,7 @@ def test_interactive_secrets_are_hidden_and_confirmed_and_only_the_seed_is_requi
     assert (tmp_path / "key").exists()
 
 
-@pytest.mark.parametrize("flag", ["--overwrite-files", "--create-parent-dirs"])
+@pytest.mark.parametrize("flag", ["--overwrite-files", "--create-parent-dirs", "--pretty"])
 def test_a_flag_that_doesnt_count_alone_keeps_interactive_mode(monkeypatch, flag):
     asked = []
 

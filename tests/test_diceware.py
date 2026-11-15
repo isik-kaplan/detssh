@@ -113,3 +113,21 @@ def test_run_passes_the_seed_prog_name_through(monkeypatch, capsys):
 
     assert exit_info.value.code == 0
     assert capsys.readouterr().out.splitlines()[0] == "Usage: detssh seed [OPTIONS]"
+
+
+def test_the_pretty_seed_grids_the_words_within_the_terminal(monkeypatch):
+    monkeypatch.setattr(diceware, "generate", lambda count: ["plaza", "cobweb", "untried", "mutt", "repave"])
+    monkeypatch.setenv("COLUMNS", "40")
+
+    result = CliRunner().invoke(seed, ["--words", "5", "--pretty"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "┌─────────┬─────────┬─────────┐",
+        "│ plaza   │ cobweb  │ untried │",
+        "├─────────┼─────────┼─────────┤",
+        "│ mutt    │ repave  │         │",
+        "└─────────┴─────────┴─────────┘",
+    ]
+    assert result.stderr.splitlines()[0] == "The seed is these words in order, left to right, one space between each."
+    assert "~65 bits: 5 random words" in result.stderr

@@ -33,6 +33,7 @@ from detssh.keygen import (
     ssh_dir,
     write_keypair,
 )
+from detssh.table import box
 
 
 FAST_KDF_PARAMS = {
@@ -724,6 +725,31 @@ def test_write_keypair_and_recap_prints_the_exact_recap(tmp_path, capsys):
         f"  {'kdf':<18} argon2id\n"
         f"  {'algorithm':<18} ed25519\n"
     )
+
+
+@pytest.mark.parametrize(("passphrase", "encrypted"), [("", ""), ("hunter2", " (encrypted)")])
+def test_pretty_write_keypair_and_recap_prints_tables(tmp_path, capsys, passphrase, encrypted):
+    priv_path, pub_path = write_keypair_and_recap(
+        b"\x09" * 32,
+        tmp_path / "key",
+        comment="",
+        recap=(("kdf", "argon2id"),),
+        key_passphrase=passphrase,
+        pretty=True,
+    )
+
+    assert capsys.readouterr().out.splitlines() == [
+        *box([("private key", f"{priv_path}{encrypted}"), ("public key", pub_path)], headers=("wrote", "path")),
+        "",
+        "To recreate this exact key, remember your passphrase (keep it secret) plus:",
+        "┌───────────┬──────────┐",
+        "│ setting   │ value    │",
+        "┝━━━━━━━━━━━┿━━━━━━━━━━┥",
+        "│ kdf       │ argon2id │",
+        "├───────────┼──────────┤",
+        "│ algorithm │ ed25519  │",
+        "└───────────┴──────────┘",
+    ]
 
 
 def test_write_keypair_and_recap_marks_the_private_key_encrypted_when_passphrase_given(tmp_path, capsys):
